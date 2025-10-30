@@ -116,7 +116,7 @@ export default function Home() {
 
           {/* IMPORTANT: POST + absolute redirect */}
           <form
-            action="https://formsubmit.co/info@dentflowai.co.za"
+            action="https://formsubmit.co/info@dentflowai.co.za?redirect=https://www.dentflowai.co.za/thanks"
             method="POST"
             className="grid md:grid-cols-2 gap-4"
           >
