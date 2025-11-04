@@ -140,7 +140,11 @@ export default function DashboardPage() {
   }
 
   // Join helper
-  const patientName = (id) => patients.find(p => p.id === id)?.full_name || 'Unknown'
+  const patientName = (id) =>
+  Array.isArray(patients)
+    ? (patients.find((p) => p.id === id)?.full_name || 'Unknown')
+    : 'Unknown'
+
 
   // -------- Status update (with optimistic UI) --------
   async function updateAppointmentStatus(id, nextStatus) {
@@ -180,24 +184,30 @@ export default function DashboardPage() {
           {leadsLoading && <p className="text-sm text-gray-500">Loading leads…</p>}
           {leadsError && <p className="text-sm text-red-600">Error: {leadsError}</p>}
           {!leadsLoading && !leadsError && leads.length === 0 && <p className="text-sm text-gray-500">No leads yet.</p>}
-          <ul className="divide-y">
-            {leads.map(l => (
-              <li key={l.id} className="py-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">
-                      {l.clinic_name || 'Unknown clinic'}<span className="text-gray-400"> — {l.clinic_type || 'N/A'}</span>
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {l.contact_name || 'No contact'} • {l.email}{l.phone ? ` • ${l.phone}` : ''}{l.created_by ? ` • by ${l.created_by}` : ''}
-                    </p>
-                  </div>
-                  <span className="text-xs text-gray-400">{new Date(l.created_at).toLocaleString()}</span>
-                </div>
-                {l.message && <p className="text-xs text-gray-600 mt-1">{l.message}</p>}
-              </li>
-            ))}
-          </ul>
+         <ul className="divide-y">
+  {Array.isArray(leads) && leads.map((lead) => (
+    <li key={lead.id} className="py-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium">
+            {lead.clinic_name || 'Unknown clinic'}
+            <span className="text-gray-400"> — {lead.clinic_type || 'N/A'}</span>
+          </p>
+          <p className="text-xs text-gray-500">
+            {lead.contact_name || 'No contact'} • {lead.email}
+            {lead.phone ? ` • ${lead.phone}` : ''}
+            {lead.created_by ? ` • by ${lead.created_by}` : ''}
+          </p>
+        </div>
+        <span className="text-xs text-gray-400">
+          {lead.created_at ? new Date(lead.created_at).toLocaleString() : ''}
+        </span>
+      </div>
+      {lead.message && <p className="text-xs text-gray-600 mt-1">{lead.message}</p>}
+    </li>
+  ))}
+</ul>
+
         </div>
 
         {/* Add Lead */}
@@ -226,17 +236,21 @@ export default function DashboardPage() {
           <AddPatientForm email={session?.user?.email} onSaved={fetchPatients} />
           <p className="text-xs text-gray-500 mt-3">Patients listed below will appear in the appointment selector.</p>
           {patientsLoading ? (
-            <p className="text-sm text-gray-500 mt-3">Loading patients…</p>
-          ) : patientsErr ? (
-            <p className="text-sm text-red-600 mt-3">Error: {patientsErr}</p>
-          ) : (
-            <ul className="divide-y mt-3 max-h-60 overflow-auto">
-              {patients.map(p => (
-                <li key={p.id} className="py-2 text-sm">
-                  {p.full_name} {p.phone ? `• ${p.phone}` : ''} {p.email ? `• ${p.email}` : ''}
-                </li>
-              ))}
-            </ul>
+  <p className="text-sm text-gray-500 mt-3">Loading patients…</p>
+) : patientsErr ? (
+  <p className="text-sm text-red-600 mt-3">Error: {patientsErr}</p>
+) : (
+  <ul className="divide-y mt-3 max-h-60 overflow-auto">
+    {Array.isArray(patients) && patients.map((patient) => (
+      <li key={patient.id} className="py-2 text-sm">
+        {patient.full_name}
+        {patient.phone ? ` • ${patient.phone}` : ''}
+        {patient.email ? ` • ${patient.email}` : ''}
+      </li>
+    ))}
+  </ul>
+)}
+
           )}
         </div>
 
@@ -272,43 +286,62 @@ export default function DashboardPage() {
           )}
 
           <ul className="divide-y mt-2">
-            {appts.map(a => (
-              <li key={a.id} className="py-3">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">
-                      {a.title || 'Appointment'}
-                      {a.patient_id ? ` — ${patientName(a.patient_id)}` : ''}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {formatTime(a.starts_at)}–{formatTime(a.ends_at)} {a.created_by ? `• by ${a.created_by}` : ''}
-                    </p>
-                    {a.notes && <p className="text-xs text-gray-600 mt-1">{a.notes}</p>}
-                  </div>
+  {Array.isArray(appts) && appts.map((appt) => (
+    <li key={appt.id} className="py-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">
+            {appt.title || 'Appointment'}
+            {appt.patient_id ? ` — ${patientName(appt.patient_id)}` : ''}
+          </p>
+          <p className="text-xs text-gray-500">
+            {appt.starts_at ? formatTime(appt.starts_at) : ''}–
+            {appt.ends_at ? formatTime(appt.ends_at) : ''}
+            {appt.created_by ? ` • by ${appt.created_by}` : ''}
+          </p>
+          {appt.notes && <p className="text-xs text-gray-600 mt-1">{appt.notes}</p>}
+        </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <StatusChip status={a.status} />
-                    {a.status !== 'confirmed' && (
-                      <button onClick={() => updateAppointmentStatus(a.id, 'confirmed')}
-                        className="text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700">Confirm</button>
-                    )}
-                    {a.status !== 'completed' && (
-                      <button onClick={() => updateAppointmentStatus(a.id, 'completed')}
-                        className="text-xs px-2 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Complete</button>
-                    )}
-                    {a.status !== 'no_show' && (
-                      <button onClick={() => updateAppointmentStatus(a.id, 'no_show')}
-                        className="text-xs px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700">No-show</button>
-                    )}
-                    {a.status !== 'cancelled' && (
-                      <button onClick={() => updateAppointmentStatus(a.id, 'cancelled')}
-                        className="text-xs px-2 py-1 rounded-lg bg-rose-600 text-white hover:bg-rose-700">Cancel</button>
-                    )}
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
+        <div className="flex items-center gap-2 shrink-0">
+          <StatusChip status={appt.status} />
+          {appt.status !== 'confirmed' && (
+            <button
+              onClick={() => updateAppointmentStatus(appt.id, 'confirmed')}
+              className="text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Confirm
+            </button>
+          )}
+          {appt.status !== 'completed' && (
+            <button
+              onClick={() => updateAppointmentStatus(appt.id, 'completed')}
+              className="text-xs px-2 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              Complete
+            </button>
+          )}
+          {appt.status !== 'no_show' && (
+            <button
+              onClick={() => updateAppointmentStatus(appt.id, 'no_show')}
+              className="text-xs px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700"
+            >
+              No-show
+            </button>
+          )}
+          {appt.status !== 'cancelled' && (
+            <button
+              onClick={() => updateAppointmentStatus(appt.id, 'cancelled')}
+              className="text-xs px-2 py-1 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      </div>
+    </li>
+  ))}
+</ul>
+
         </div>
 
       </main>
