@@ -38,6 +38,9 @@ function StatusChip({ status }) {
   const meta = STATUS_META[status] ?? STATUS_META.scheduled
   return <span className={`text-xs px-2 py-1 rounded-lg ${meta.cls}`}>{meta.label}</span>
 }
+// Filters
+const [statusFilter, setStatusFilter] = useState('all'); // all | scheduled | confirmed | completed | no_show | cancelled
+const [search, setSearch] = useState(''); // patient/title search
 
 /* ---------- Page ---------- */
 
@@ -145,11 +148,20 @@ export default function DashboardPage() {
     ? (patients.find((p) => p.id === id)?.full_name || 'Unknown')
     : 'Unknown'
 
+const filteredAppts = Array.isArray(appts) ? appts.filter(appt => {
+  const statusOk = statusFilter === 'all' ? true : appt.status === statusFilter
+  const q = search.trim().toLowerCase()
+  const name = appt.patient_id ? patientName(appt.patient_id).toLowerCase() : ''
+  const title = (appt.title || '').toLowerCase()
+  const notes = (appt.notes || '').toLowerCase()
+  const searchOk = q ? (name.includes(q) || title.includes(q) || notes.includes(q)) : true
+  return statusOk && searchOk
+}) : []
 
   // -------- Status update (with optimistic UI) --------
   async function updateAppointmentStatus(id, nextStatus) {
     const prev = [...appts]
-    setAppts(appts.map(a => a.id === id ? { ...a, status: nextStatus } : a))
+    setAppts(filteredAppts.map(a => a.id === id ? { ...a, status: nextStatus } : a))
     const { error } = await supabase.from('appointments').update({ status: nextStatus }).eq('id', id)
     if (error) { setAppts(prev); alert(`Failed to update: ${error.message}`) }
   }
@@ -255,19 +267,43 @@ export default function DashboardPage() {
         </div>
 
         {/* Today’s Appointments */}
-        <div className="col-span-2 bg-white rounded-2xl p-6 border md:col-span-3 order-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Today’s Appointments</h2>
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={new Date(day).toISOString().slice(0,10)}
-                onChange={(e)=>setDay(new Date(e.target.value+'T00:00:00'))}
-                className="border rounded-lg px-3 py-1 text-sm"
-              />
-              <button onClick={()=>fetchAppointments(day)} className="text-sm px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200">Refresh</button>
-            </div>
-          </div>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-3">
+  <div className="flex items-center gap-2">
+    <input
+      type="date"
+      value={new Date(day).toISOString().slice(0,10)}
+      onChange={(e)=>setDay(new Date(e.target.value+'T00:00:00'))}
+      className="border rounded-lg px-3 py-1 text-sm"
+    />
+    <button onClick={()=>fetchAppointments(day)} className="text-sm px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200">
+      Refresh
+    </button>
+  </div>
+
+  <div className="flex items-center gap-2">
+    <select
+      value={statusFilter}
+      onChange={(e)=>setStatusFilter(e.target.value)}
+      className="border rounded-lg px-3 py-1 text-sm"
+      title="Filter status"
+    >
+      <option value="all">All</option>
+      <option value="scheduled">Scheduled</option>
+      <option value="confirmed">Confirmed</option>
+      <option value="completed">Completed</option>
+      <option value="no_show">No-show</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
+    <input
+      type="search"
+      value={search}
+      onChange={(e)=>setSearch(e.target.value)}
+      placeholder="Search patient/title/notes"
+      className="border rounded-lg px-3 py-1 text-sm min-w-[220px]"
+    />
+  </div>
+</div>
+
 
           <AddAppointmentForm
             day={day}
