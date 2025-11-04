@@ -251,7 +251,7 @@ export default function DashboardPage() {
   </ul>
 )}
 
-          )}
+          
         </div>
 
         {/* Today’s Appointments */}
