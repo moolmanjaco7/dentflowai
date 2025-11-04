@@ -1,8 +1,32 @@
 // pages/dashboard.js
 import { useEffect, useState } from 'react'
-import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
+import { supabase } from '../lib/supabaseClient'
 
+/* ---------- Helpers ---------- */
+
+// SA time day range (local midnight to 23:59:59, converted to ISO/UTC)
+function getDayRangeISO(dateLike = new Date()) {
+  const d = new Date(dateLike)
+  if (isNaN(d)) {
+    const now = new Date()
+    const y = now.getFullYear(), m = now.getMonth(), day = now.getDate()
+    const startLocal = new Date(y, m, day, 0, 0, 0)
+    const endLocal   = new Date(y, m, day, 23, 59, 59)
+    return { startISO: startLocal.toISOString(), endISO: endLocal.toISOString() }
+  }
+  const y = d.getFullYear(), m = d.getMonth(), day = d.getDate()
+  const startLocal = new Date(y, m, day, 0, 0, 0)
+  const endLocal   = new Date(y, m, day, 23, 59, 59)
+  return { startISO: startLocal.toISOString(), endISO: endLocal.toISOString() }
+}
+function formatTime(dt) {
+  const d = new Date(dt)
+  if (isNaN(d)) return ''
+  return d.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })
+}
+
+// Status chip metadata
 const STATUS_META = {
   scheduled: { label: 'Scheduled', cls: 'bg-slate-100 text-slate-700' },
   confirmed: { label: 'Confirmed', cls: 'bg-blue-100 text-blue-700' },
@@ -10,51 +34,35 @@ const STATUS_META = {
   no_show:   { label: 'No-show',   cls: 'bg-amber-100 text-amber-700' },
   cancelled: { label: 'Cancelled', cls: 'bg-rose-100 text-rose-700' },
 }
-
 function StatusChip({ status }) {
   const meta = STATUS_META[status] ?? STATUS_META.scheduled
-  return (
-    <span className={`text-xs px-2 py-1 rounded-lg ${meta.cls}`}>
-      {meta.label}
-    </span>
-  )
+  return <span className={`text-xs px-2 py-1 rounded-lg ${meta.cls}`}>{meta.label}</span>
 }
 
-
-// SA time helpers
-function getDayRangeISO(dateLike = new Date()) {
-  const d = new Date(dateLike)
-  const y = d.getFullYear(), m = d.getMonth(), day = d.getDate()
-  const startLocal = new Date(y, m, day, 0, 0, 0)
-  const endLocal   = new Date(y, m, day, 23, 59, 59)
-  return { startISO: startLocal.toISOString(), endISO: endLocal.toISOString() }
-}
-function formatTime(dt) {
-  return new Date(dt).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })
-}
+/* ---------- Page ---------- */
 
 export default function DashboardPage() {
   const router = useRouter()
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // LEADS
+  // Leads
   const [leads, setLeads] = useState([])
   const [leadsLoading, setLeadsLoading] = useState(true)
   const [leadsError, setLeadsError] = useState('')
 
-  // APPOINTMENTS
+  // Patients
+  const [patients, setPatients] = useState([])
+  const [patientsLoading, setPatientsLoading] = useState(true)
+  const [patientsErr, setPatientsErr] = useState('')
+
+  // Appointments
   const [day, setDay] = useState(new Date())
   const [appts, setAppts] = useState([])
   const [apptsLoading, setApptsLoading] = useState(true)
   const [apptsErr, setApptsErr] = useState('')
 
-  // PATIENTS
-  const [patients, setPatients] = useState([])
-  const [patientsLoading, setPatientsLoading] = useState(true)
-  const [patientsErr, setPatientsErr] = useState('')
-
-  // Add Lead state
+  // Lead form
   const [formLead, setFormLead] = useState({
     clinic_name: '', contact_name: '', email: '', phone: '',
     clinic_type: 'Dental', practitioners: '', message: ''
@@ -62,8 +70,8 @@ export default function DashboardPage() {
   const [leadSaving, setLeadSaving] = useState(false)
   const [leadMsg, setLeadMsg] = useState('')
 
+  // -------- Auth --------
   useEffect(() => {
-    // auth guard
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session ?? null)
       setLoading(false)
@@ -76,7 +84,7 @@ export default function DashboardPage() {
     return () => listener.subscription.unsubscribe()
   }, [router])
 
-  // Fetch Leads
+  // -------- Fetchers --------
   const fetchLeads = async () => {
     setLeadsLoading(true); setLeadsError('')
     const { data, error } = await supabase.from('leads')
@@ -84,8 +92,6 @@ export default function DashboardPage() {
     if (error) setLeadsError(error.message); else setLeads(data || [])
     setLeadsLoading(false)
   }
-
-  // Fetch Patients
   const fetchPatients = async () => {
     setPatientsLoading(true); setPatientsErr('')
     const { data, error } = await supabase.from('patients')
@@ -93,12 +99,9 @@ export default function DashboardPage() {
     if (error) setPatientsErr(error.message); else setPatients(data || [])
     setPatientsLoading(false)
   }
-
-  // Fetch Appointments (for selected day)
   async function fetchAppointments(targetDate = day) {
     setApptsLoading(true); setApptsErr('')
     const { startISO, endISO } = getDayRangeISO(targetDate)
-    // Pull appointments and then join patient name client-side
     const { data, error } = await supabase.from('appointments')
       .select('*').gte('starts_at', startISO).lte('starts_at', endISO)
       .order('starts_at', { ascending: true })
@@ -106,32 +109,14 @@ export default function DashboardPage() {
     setApptsLoading(false)
   }
 
-async function updateAppointmentStatus(id, nextStatus) {
-  // optimistic UI: update local state first
-  const prev = [...appts]
-  setAppts(appts.map(a => a.id === id ? { ...a, status: nextStatus } : a))
-
-  const { error } = await supabase
-    .from('appointments')
-    .update({ status: nextStatus })
-    .eq('id', id)
-
-  if (error) {
-    // revert on error
-    setAppts(prev)
-    alert(`Failed to update: ${error.message}`)
-  }
-}
-
-
   useEffect(() => {
     fetchLeads(); fetchPatients(); fetchAppointments(day)
-    const id = setInterval(() => { fetchAppointments(day) }, 30000)
+    const id = setInterval(() => fetchAppointments(day), 30000)
     return () => clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day])
 
-  // Add Lead
+  // -------- Lead add --------
   const onLeadChange = (e) => setFormLead(f => ({ ...f, [e.target.name]: e.target.value }))
   const addLead = async (e) => {
     e.preventDefault()
@@ -154,7 +139,16 @@ async function updateAppointmentStatus(id, nextStatus) {
     }
   }
 
+  // Join helper
   const patientName = (id) => patients.find(p => p.id === id)?.full_name || 'Unknown'
+
+  // -------- Status update (with optimistic UI) --------
+  async function updateAppointmentStatus(id, nextStatus) {
+    const prev = [...appts]
+    setAppts(appts.map(a => a.id === id ? { ...a, status: nextStatus } : a))
+    const { error } = await supabase.from('appointments').update({ status: nextStatus }).eq('id', id)
+    if (error) { setAppts(prev); alert(`Failed to update: ${error.message}`) }
+  }
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center text-gray-400">Loading dashboard...</div>
@@ -167,13 +161,16 @@ async function updateAppointmentStatus(id, nextStatus) {
         <h1 className="text-xl font-bold text-blue-800">DentFlow AI – Clinic Dashboard</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-500">{session?.user?.email}</span>
-          <button onClick={async()=>{ await supabase.auth.signOut(); router.push('/auth/login')}} className="text-sm bg-red-100 text-red-600 px-3 py-1 rounded-lg hover:bg-red-200">Logout</button>
+          <button
+            onClick={async () => { await supabase.auth.signOut(); router.push('/auth/login') }}
+            className="text-sm bg-red-100 text-red-600 px-3 py-1 rounded-lg hover:bg-red-200"
+          >
+            Logout
+          </button>
         </div>
       </header>
 
-      {/* Content */}
       <main className="p-6 grid gap-6 md:grid-cols-3">
-
         {/* Latest Leads */}
         <div className="bg-white rounded-2xl p-6 border order-2 md:order-1">
           <div className="flex items-center justify-between mb-3">
@@ -185,62 +182,20 @@ async function updateAppointmentStatus(id, nextStatus) {
           {!leadsLoading && !leadsError && leads.length === 0 && <p className="text-sm text-gray-500">No leads yet.</p>}
           <ul className="divide-y">
             {leads.map(l => (
-              <li key={a.id} className="py-3">
-  <div className="flex items-start justify-between gap-4">
-    <div className="min-w-0">
-      <p className="text-sm font-medium">
-        {a.title || 'Appointment'}
-        {a.patient_id ? ` — ${patientName(a.patient_id)}` : ''}
-      </p>
-      <p className="text-xs text-gray-500">
-        {formatTime(a.starts_at)}–{formatTime(a.ends_at)} • {a.created_by ? `by ${a.created_by}` : ''}
-      </p>
-      {a.notes && <p className="text-xs text-gray-600 mt-1">{a.notes}</p>}
-    </div>
-
-    <div className="flex items-center gap-2 shrink-0">
-      <StatusChip status={a.status} />
-      {/* Quick actions */}
-      {a.status !== 'confirmed' && (
-        <button
-          onClick={() => updateAppointmentStatus(a.id, 'confirmed')}
-          className="text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
-          title="Mark as confirmed"
-        >
-          Confirm
-        </button>
-      )}
-      {a.status !== 'completed' && (
-        <button
-          onClick={() => updateAppointmentStatus(a.id, 'completed')}
-          className="text-xs px-2 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
-          title="Mark as completed"
-        >
-          Complete
-        </button>
-      )}
-      {a.status !== 'no_show' && (
-        <button
-          onClick={() => updateAppointmentStatus(a.id, 'no_show')}
-          className="text-xs px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700"
-          title="Mark as no-show"
-        >
-          No-show
-        </button>
-      )}
-      {a.status !== 'cancelled' && (
-        <button
-          onClick={() => updateAppointmentStatus(a.id, 'cancelled')}
-          className="text-xs px-2 py-1 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
-          title="Cancel appointment"
-        >
-          Cancel
-        </button>
-      )}
-    </div>
-  </div>
-</li>
-
+              <li key={l.id} className="py-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">
+                      {l.clinic_name || 'Unknown clinic'}<span className="text-gray-400"> — {l.clinic_type || 'N/A'}</span>
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {l.contact_name || 'No contact'} • {l.email}{l.phone ? ` • ${l.phone}` : ''}{l.created_by ? ` • by ${l.created_by}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-xs text-gray-400">{new Date(l.created_at).toLocaleString()}</span>
+                </div>
+                {l.message && <p className="text-xs text-gray-600 mt-1">{l.message}</p>}
+              </li>
             ))}
           </ul>
         </div>
@@ -265,13 +220,11 @@ async function updateAppointmentStatus(id, nextStatus) {
           </form>
         </div>
 
-        {/* Add Patient (inline CRM) */}
+        {/* Patients (add + list) */}
         <div className="bg-white rounded-2xl p-6 border order-3 md:order-3">
           <h2 className="font-semibold mb-3">Add Patient</h2>
           <AddPatientForm email={session?.user?.email} onSaved={fetchPatients} />
-          <p className="text-xs text-gray-500 mt-3">
-            Patients listed below will appear in the appointment selector.
-          </p>
+          <p className="text-xs text-gray-500 mt-3">Patients listed below will appear in the appointment selector.</p>
           {patientsLoading ? (
             <p className="text-sm text-gray-500 mt-3">Loading patients…</p>
           ) : patientsErr ? (
@@ -292,10 +245,12 @@ async function updateAppointmentStatus(id, nextStatus) {
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold">Today’s Appointments</h2>
             <div className="flex items-center gap-2">
-              <input type="date"
+              <input
+                type="date"
                 value={new Date(day).toISOString().slice(0,10)}
                 onChange={(e)=>setDay(new Date(e.target.value+'T00:00:00'))}
-                className="border rounded-lg px-3 py-1 text-sm" />
+                className="border rounded-lg px-3 py-1 text-sm"
+              />
               <button onClick={()=>fetchAppointments(day)} className="text-sm px-3 py-1 rounded-lg bg-slate-100 hover:bg-slate-200">Refresh</button>
             </div>
           </div>
@@ -319,17 +274,36 @@ async function updateAppointmentStatus(id, nextStatus) {
           <ul className="divide-y mt-2">
             {appts.map(a => (
               <li key={a.id} className="py-3">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
                     <p className="text-sm font-medium">
                       {a.title || 'Appointment'}
                       {a.patient_id ? ` — ${patientName(a.patient_id)}` : ''}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {formatTime(a.starts_at)}–{formatTime(a.ends_at)} • {a.status}
-                      {a.created_by ? ` • by ${a.created_by}` : ''}
+                      {formatTime(a.starts_at)}–{formatTime(a.ends_at)} {a.created_by ? `• by ${a.created_by}` : ''}
                     </p>
                     {a.notes && <p className="text-xs text-gray-600 mt-1">{a.notes}</p>}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <StatusChip status={a.status} />
+                    {a.status !== 'confirmed' && (
+                      <button onClick={() => updateAppointmentStatus(a.id, 'confirmed')}
+                        className="text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700">Confirm</button>
+                    )}
+                    {a.status !== 'completed' && (
+                      <button onClick={() => updateAppointmentStatus(a.id, 'completed')}
+                        className="text-xs px-2 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">Complete</button>
+                    )}
+                    {a.status !== 'no_show' && (
+                      <button onClick={() => updateAppointmentStatus(a.id, 'no_show')}
+                        className="text-xs px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700">No-show</button>
+                    )}
+                    {a.status !== 'cancelled' && (
+                      <button onClick={() => updateAppointmentStatus(a.id, 'cancelled')}
+                        className="text-xs px-2 py-1 rounded-lg bg-rose-600 text-white hover:bg-rose-700">Cancel</button>
+                    )}
                   </div>
                 </div>
               </li>
@@ -342,7 +316,7 @@ async function updateAppointmentStatus(id, nextStatus) {
   )
 }
 
-// ------- Subcomponents -------
+/* ---------- Subcomponents ---------- */
 
 function AddPatientForm({ email, onSaved }) {
   const [full_name, setName] = useState('')
@@ -430,7 +404,7 @@ function AddAppointmentForm({ day, onSaved, email, patients }) {
       <input type="time" value={end} onChange={e=>setEnd(e.target.value)} className="border rounded-lg px-3 py-2" />
       <select value={patient_id} onChange={e=>setPatientId(e.target.value)} className="border rounded-lg px-3 py-2">
         <option value="">Select patient (optional)</option>
-        {patients.map(p => (
+        {Array.isArray(patients) && patients.map(p => (
           <option key={p.id} value={p.id}>{p.full_name}</option>
         ))}
       </select>
