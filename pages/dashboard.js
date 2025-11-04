@@ -266,7 +266,7 @@ const filteredAppts = Array.isArray(appts) ? appts.filter(appt => {
           
         </div>
 
-        {/* Today’s Appointments */}
+        {/* Filter UI */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-3">
   <div className="flex items-center gap-2">
     <input
