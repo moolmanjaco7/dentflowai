@@ -3,6 +3,24 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useRouter } from 'next/router'
 
+const STATUS_META = {
+  scheduled: { label: 'Scheduled', cls: 'bg-slate-100 text-slate-700' },
+  confirmed: { label: 'Confirmed', cls: 'bg-blue-100 text-blue-700' },
+  completed: { label: 'Completed', cls: 'bg-emerald-100 text-emerald-700' },
+  no_show:   { label: 'No-show',   cls: 'bg-amber-100 text-amber-700' },
+  cancelled: { label: 'Cancelled', cls: 'bg-rose-100 text-rose-700' },
+}
+
+function StatusChip({ status }) {
+  const meta = STATUS_META[status] ?? STATUS_META.scheduled
+  return (
+    <span className={`text-xs px-2 py-1 rounded-lg ${meta.cls}`}>
+      {meta.label}
+    </span>
+  )
+}
+
+
 // SA time helpers
 function getDayRangeISO(dateLike = new Date()) {
   const d = new Date(dateLike)
@@ -88,6 +106,24 @@ export default function DashboardPage() {
     setApptsLoading(false)
   }
 
+async function updateAppointmentStatus(id, nextStatus) {
+  // optimistic UI: update local state first
+  const prev = [...appts]
+  setAppts(appts.map(a => a.id === id ? { ...a, status: nextStatus } : a))
+
+  const { error } = await supabase
+    .from('appointments')
+    .update({ status: nextStatus })
+    .eq('id', id)
+
+  if (error) {
+    // revert on error
+    setAppts(prev)
+    alert(`Failed to update: ${error.message}`)
+  }
+}
+
+
   useEffect(() => {
     fetchLeads(); fetchPatients(); fetchAppointments(day)
     const id = setInterval(() => { fetchAppointments(day) }, 30000)
@@ -149,18 +185,62 @@ export default function DashboardPage() {
           {!leadsLoading && !leadsError && leads.length === 0 && <p className="text-sm text-gray-500">No leads yet.</p>}
           <ul className="divide-y">
             {leads.map(l => (
-              <li key={l.id} className="py-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">{l.clinic_name || 'Unknown clinic'}<span className="text-gray-400"> — {l.clinic_type || 'N/A'}</span></p>
-                    <p className="text-xs text-gray-500">
-                      {l.contact_name || 'No contact'} • {l.email}{l.phone ? ` • ${l.phone}` : ''}{l.created_by ? ` • by ${l.created_by}` : ''}
-                    </p>
-                  </div>
-                  <span className="text-xs text-gray-400">{new Date(l.created_at).toLocaleString()}</span>
-                </div>
-                {l.message && <p className="text-xs text-gray-600 mt-2">{l.message}</p>}
-              </li>
+              <li key={a.id} className="py-3">
+  <div className="flex items-start justify-between gap-4">
+    <div className="min-w-0">
+      <p className="text-sm font-medium">
+        {a.title || 'Appointment'}
+        {a.patient_id ? ` — ${patientName(a.patient_id)}` : ''}
+      </p>
+      <p className="text-xs text-gray-500">
+        {formatTime(a.starts_at)}–{formatTime(a.ends_at)} • {a.created_by ? `by ${a.created_by}` : ''}
+      </p>
+      {a.notes && <p className="text-xs text-gray-600 mt-1">{a.notes}</p>}
+    </div>
+
+    <div className="flex items-center gap-2 shrink-0">
+      <StatusChip status={a.status} />
+      {/* Quick actions */}
+      {a.status !== 'confirmed' && (
+        <button
+          onClick={() => updateAppointmentStatus(a.id, 'confirmed')}
+          className="text-xs px-2 py-1 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+          title="Mark as confirmed"
+        >
+          Confirm
+        </button>
+      )}
+      {a.status !== 'completed' && (
+        <button
+          onClick={() => updateAppointmentStatus(a.id, 'completed')}
+          className="text-xs px-2 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+          title="Mark as completed"
+        >
+          Complete
+        </button>
+      )}
+      {a.status !== 'no_show' && (
+        <button
+          onClick={() => updateAppointmentStatus(a.id, 'no_show')}
+          className="text-xs px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700"
+          title="Mark as no-show"
+        >
+          No-show
+        </button>
+      )}
+      {a.status !== 'cancelled' && (
+        <button
+          onClick={() => updateAppointmentStatus(a.id, 'cancelled')}
+          className="text-xs px-2 py-1 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
+          title="Cancel appointment"
+        >
+          Cancel
+        </button>
+      )}
+    </div>
+  </div>
+</li>
+
             ))}
           </ul>
         </div>
