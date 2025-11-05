@@ -418,12 +418,26 @@ export default function DashboardPage() {
                     )}
                     {/* Remind */}
                     <button
-                      onClick={() => sendReminder(appt.id)}
-                      className="text-xs px-2 py-1 rounded-lg bg-violet-600 text-white hover:bg-violet-700"
-                      title="Send reminder (email/WhatsApp)"
-                    >
-                      Remind
-                    </button>
+  onClick={async () => {
+    try {
+      const r = await fetch('/api/reminder', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ apptId: appt.id })
+      })
+      const j = await r.json()
+      if (!j.ok) throw new Error(j.error || 'Failed')
+      alert(`Reminder sent`)
+    } catch (e) {
+      alert(`Unable to send: ${e.message}`)
+    }
+  }}
+  className="text-xs px-2 py-1 rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+  title="Send reminder"
+>
+Remind
+</button>
+
                   </div>
                 </div>
               </li>
