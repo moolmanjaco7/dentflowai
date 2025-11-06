@@ -241,8 +241,9 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="mt-16 text-xs text-slate-500">
-  Powered by DentFlow AI  <a className="underline" href="/pricing">Pricing</a> • <a className="underline" href="/privacy">Privacy</a> • <a className="underline" href="/terms">Terms</a>
+  Powered by DentFlow AI • <a className="underline" href="/pricing">Pricing</a> • <a className="underline" href="/privacy">Privacy</a> • <a className="underline" href="/terms">Terms</a>
 </footer>
+
 
     </div>
   )
