@@ -3,16 +3,17 @@ import nodemailer from 'nodemailer'
 
 export default async function handler(req, res) {
   try {
-    const required = ['SMTP_HOST','SMTP_USER','SMTP_PASS']
-    for (const k of required) {
-      if (!process.env[k]) return res.status(500).json({ ok:false, error:`Missing env ${k}` })
-    }
     const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 465),
-      secure: String(process.env.SMTP_SECURE || 'true') === 'true',
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    })
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT || 587),
+  secure: String(process.env.SMTP_SECURE || 'false') === 'true', // true=465 SSL, false=STARTTLS/plain
+  requireTLS: String(process.env.SMTP_REQUIRE_TLS || 'false') === 'true',
+  ignoreTLS: String(process.env.SMTP_IGNORE_TLS || 'false') === 'true',
+  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  tls: { minVersion: 'TLSv1.2' },       // safe default
+  connectionTimeout: 15000,             // fail fast
+})
+
     await transporter.verify()
 
     // send to yourself to confirm
