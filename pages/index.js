@@ -240,10 +240,10 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="text-center py-10 text-gray-500 border-t">
-        <p>© 2025 DentFlow AI | Powered by DentFlow⚪️</p>
-        <p className="text-sm">info@dentflowai.co.za • @DentFlow_AI</p>
-      </footer>
+      <footer className="mt-16 text-xs text-slate-500">
+  Powered by DentFlow AI  <a className="underline" href="/pricing">Pricing</a> • <a className="underline" href="/privacy">Privacy</a> • <a className="underline" href="/terms">Terms</a>
+</footer>
+
     </div>
   )
 }
