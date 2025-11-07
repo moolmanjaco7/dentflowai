@@ -1,54 +1,39 @@
-// pages/auth/login.js
+// pages/auth/login.js (replace the form handler)
 import { useState } from 'react'
-import { useRouter } from 'next/router'
-import { supabase } from '../../lib/supabaseClient'
+import { createClient } from '@supabase/supabase-js'
 
-export default function LoginPage() {
-  const router = useRouter()
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+)
+
+export default function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
+  const [err, setErr] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleLogin = async (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault()
-    setError('')
+    setErr('')
     setLoading(true)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
-    if (error) { setError(error.message); return }
-    router.push('/dashboard')
+    if (error) { setErr(error.message); return }
+    window.location.href = '/dashboard'  // let dashboard run its client-side guard
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-white to-blue-50 px-4">
-      <div className="bg-white rounded-2xl shadow-md w-full max-w-md p-8 border">
-        <h1 className="text-2xl font-bold text-blue-800 mb-1">DentFlow AI</h1>
-        <p className="text-gray-500 mb-6 text-sm">Clinic Admin Login</p>
-
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="text-sm text-gray-700">Email</label>
-            <input type="email" required value={email}
-                   onChange={e=>setEmail(e.target.value)}
-                   className="mt-1 w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-200" />
-          </div>
-
-          <div>
-            <label className="text-sm text-gray-700">Password</label>
-            <input type="password" required value={password}
-                   onChange={e=>setPassword(e.target.value)}
-                   className="mt-1 w-full border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-200" />
-          </div>
-
-          {error && <p className="text-red-500 text-sm">{error}</p>}
-
-          <button type="submit" disabled={loading}
-                  className="w-full bg-blue-700 text-white py-2 rounded-lg hover:bg-blue-800">
-            {loading ? 'Signing in…' : 'Login'}
-          </button>
-        </form>
-      </div>
-    </div>
+    <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <form onSubmit={onSubmit} className="bg-white border rounded-2xl p-6 w-full max-w-sm">
+        <h1 className="text-xl font-bold">Login</h1>
+        <input className="mt-4 w-full border rounded-lg p-2" placeholder="Email" value={email} onChange={e=>setEmail(e.target.value)} />
+        <input className="mt-2 w-full border rounded-lg p-2" type="password" placeholder="Password" value={password} onChange={e=>setPassword(e.target.value)} />
+        {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+        <button disabled={loading} className="mt-4 w-full rounded-lg bg-blue-700 text-white py-2 hover:bg-blue-800">
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+    </main>
   )
 }
