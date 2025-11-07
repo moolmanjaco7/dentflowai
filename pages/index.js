@@ -10,6 +10,7 @@ export default function Home() {
         <meta name="description" content="Capture leads, manage patients, and reduce no-shows with one simple dashboard." />
       </Head>
 
+      {/* Top Nav */}
       <header className="bg-white border-b">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="text-xl font-extrabold text-brand-800">DentFlow <span className="text-brand-700">AI</span></div>
@@ -22,6 +23,7 @@ export default function Home() {
         </div>
       </header>
 
+      {/* === Main === */}
       <main>
         {/* Hero */}
         <section className="bg-white">
@@ -33,24 +35,23 @@ export default function Home() {
               <p className="mt-4 text-lg text-slate-600 max-w-xl">
                 Capture leads, manage patients, and reduce no-shows — all in one simple dashboard.
               </p>
-              {/* CTA buttons in the hero */}
-<div className="mt-6 flex flex-col sm:flex-row gap-3">
-  <Link href="/auth/login" className="inline-flex justify-center px-5 py-3 rounded-xl bg-brand-600 text-white hover:bg-brand-700">
-    Start 7-Day Free Trial
-  </Link>
-  <Link href="/demo" className="inline-flex justify-center px-5 py-3 rounded-xl border border-slate-200 hover:bg-slate-100">
-    Book a Demo
-  </Link>
-  <a href="#features" className="inline-flex justify-center px-5 py-3 rounded-xl border border-slate-200 hover:bg-slate-100">
-    See features
-  </a>
-</div>
-
+              {/* CTA buttons */}
+              <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                <Link href="/auth/login" className="inline-flex justify-center px-5 py-3 rounded-xl bg-brand-600 text-white hover:bg-brand-700">
+                  Start 7-Day Free Trial
+                </Link>
+                <Link href="/demo" className="inline-flex justify-center px-5 py-3 rounded-xl border border-slate-200 hover:bg-slate-100">
+                  Book a Demo
+                </Link>
+                <a href="#features" className="inline-flex justify-center px-5 py-3 rounded-xl border border-slate-200 hover:bg-slate-100">
+                  See features
+                </a>
               </div>
               <p className="mt-2 text-xs text-slate-500">No credit card required. Cancel anytime.</p>
             </div>
+
+            {/* Simple dashboard mock */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm">
-              {/* simple illustrative “dashboard” mock */}
               <div className="flex items-center justify-between">
                 <div className="h-3 w-16 bg-slate-200 rounded"></div>
                 <div className="h-3 w-24 bg-slate-200 rounded"></div>
@@ -96,7 +97,9 @@ export default function Home() {
         <section className="py-6">
           <div className="max-w-6xl mx-auto px-4">
             <div className="bg-white border rounded-2xl p-8 md:p-10 text-center">
-              <h2 className="text-3xl font-bold text-slate-900">R499 <span className="text-base font-medium text-slate-500">/ month</span></h2>
+              <h2 className="text-3xl font-bold text-slate-900">
+                R499 <span className="text-base font-medium text-slate-500">/ month</span>
+              </h2>
               <ul className="mt-4 text-slate-700 space-y-1">
                 <li>Lead form → dashboard</li>
                 <li>Patients & appointments</li>
@@ -114,6 +117,7 @@ export default function Home() {
         </section>
       </main>
 
+      {/* Footer */}
       <footer className="mt-10 border-t bg-white">
         <div className="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-500 flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
           <div>Powered by DentFlow AI</div>
