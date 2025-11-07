@@ -33,13 +33,19 @@ export default function Home() {
               <p className="mt-4 text-lg text-slate-600 max-w-xl">
                 Capture leads, manage patients, and reduce no-shows — all in one simple dashboard.
               </p>
-              <div className="mt-6 flex flex-col sm:flex-row gap-3">
-                <Link href="/auth/login" className="inline-flex justify-center px-5 py-3 rounded-xl bg-brand-600 text-white hover:bg-brand-700">
-                  Start 7-Day Free Trial
-                </Link>
-                <a href="#features" className="inline-flex justify-center px-5 py-3 rounded-xl border border-slate-200 hover:bg-slate-100">
-                  See features
-                </a>
+              {/* CTA buttons in the hero */}
+<div className="mt-6 flex flex-col sm:flex-row gap-3">
+  <Link href="/auth/login" className="inline-flex justify-center px-5 py-3 rounded-xl bg-brand-600 text-white hover:bg-brand-700">
+    Start 7-Day Free Trial
+  </Link>
+  <Link href="/demo" className="inline-flex justify-center px-5 py-3 rounded-xl border border-slate-200 hover:bg-slate-100">
+    Book a Demo
+  </Link>
+  <a href="#features" className="inline-flex justify-center px-5 py-3 rounded-xl border border-slate-200 hover:bg-slate-100">
+    See features
+  </a>
+</div>
+
               </div>
               <p className="mt-2 text-xs text-slate-500">No credit card required. Cancel anytime.</p>
             </div>
