@@ -11,17 +11,7 @@ export default function Home() {
       </Head>
 
       {/* Top Nav */}
-      <header className="bg-white border-b">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="text-xl font-extrabold text-brand-800">DentFlow <span className="text-brand-700">AI</span></div>
-          <nav className="hidden sm:flex items-center gap-6 text-sm text-slate-600">
-            <Link href="/pricing" className="hover:text-slate-900">Pricing</Link>
-            <Link href="/privacy" className="hover:text-slate-900">Privacy</Link>
-            <Link href="/terms" className="hover:text-slate-900">Terms</Link>
-            <Link href="/auth/login" className="px-4 py-2 rounded-xl bg-brand-600 text-white hover:bg-brand-700">Dashboard Login</Link>
-          </nav>
-        </div>
-      </header>
+      
 
       {/* === Main === */}
       <main>
