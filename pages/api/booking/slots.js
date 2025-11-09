@@ -1,5 +1,5 @@
 // pages/api/booking/slots.js
-import { supabaseAdmin } from '../../../lib/supabaseAdmin'
+import { supabaseAdmin } from '../../../lib/supabaseAdmin.js'
 
 const TZ = 'Africa/Johannesburg'
 const SLOT_MINUTES = 30 // slot length
