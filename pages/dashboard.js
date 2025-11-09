@@ -3,6 +3,17 @@ import Head from 'next/head'
 import { useEffect, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Link from 'next/link'
+import DayAppointments from "./components/DayAppointments";
+
+export default function DashboardPage() {
+  return (
+    <main className="p-4 space-y-4">
+      <DayAppointments />
+      {/* other dashboard cards */}
+    </main>
+  );
+}
+
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
