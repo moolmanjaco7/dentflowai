@@ -4,6 +4,16 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Link from 'next/link'
 import DayAppointments from "./components/DayAppointments";
+import dynamic from "next/dynamic";
+const DayAppointments = dynamic(() => import("@/components/DayAppointments."), { ssr: false });
+
+export default function DashboardPage() {
+  return (
+    <main className="p-4 space-y-4">
+      <DayAppointments />
+    </main>
+  );
+}
 
 export default function DashboardPage() {
   return (
