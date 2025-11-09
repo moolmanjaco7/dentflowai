@@ -1,8 +1,10 @@
+// pages/_app.js
 import '../styles/globals.css'
 import { useEffect } from 'react'
 import CookieNotice from '../components/CookieNotice'
 import SiteFooter from '../components/SiteFooter'
 import SiteHeader from '../components/SiteHeader'
+import ErrorBoundary from '../components/ErrorBoundary'
 
 export default function MyApp({ Component, pageProps }) {
   useEffect(() => {
@@ -23,11 +25,11 @@ export default function MyApp({ Component, pageProps }) {
   }, [])
 
   return (
-    <>
+    <ErrorBoundary>
       <SiteHeader />
       <Component {...pageProps} />
       <CookieNotice />
       <SiteFooter />
-    </>
+    </ErrorBoundary>
   )
 }
