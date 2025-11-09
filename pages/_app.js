@@ -1,6 +1,8 @@
+// pages/_app.js
 import '../styles/globals.css'
 import { useEffect } from 'react'
 import CookieNotice from '../components/CookieNotice'
+import SiteFooter from '../components/SiteFooter'
 
 export default function MyApp({ Component, pageProps }) {
   useEffect(() => {
@@ -24,6 +26,7 @@ export default function MyApp({ Component, pageProps }) {
     <>
       <Component {...pageProps} />
       <CookieNotice />
+      <SiteFooter />
     </>
   )
 }
