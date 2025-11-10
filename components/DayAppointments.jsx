@@ -2,7 +2,7 @@
 "use client";
 import * as React from "react";
 import { addDays, format } from "date-fns";
-import { formatInTimeZone, zonedTimeToUtc } from "date-fns-tz";
+import { formatInTimeZone, toDate } from "date-fns-tz";
 import { createClient } from "@supabase/supabase-js";
 import { Calendar } from "@/components/ui/calendar";
 import { Card } from "@/components/ui/card";
@@ -20,10 +20,11 @@ const supabase = createClient(
 
 function dayRangeUTC(date) {
   const startLocalStr = formatInTimeZone(date, TZ, "yyyy-MM-dd 00:00:00");
-  const startUtc = zonedTimeToUtc(startLocalStr, TZ);
+  const startUtc = toDate(startLocalStr, { timeZone: TZ });
   const endUtc = addDays(startUtc, 1);
   return { startUtc, endUtc };
 }
+
 
 export default function DayAppointments() {
   const [date, setDate] = React.useState(new Date());
