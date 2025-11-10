@@ -3,7 +3,7 @@
 import * as React from "react";
 import { addDays, format } from "date-fns";
 import { formatInTimeZone, zonedTimeToUtc } from "date-fns-tz";
-import { createClient } from "@/lib/supabaseClient";
+import { createClient } from "@supabase/supabase-js";
 import { Calendar } from "@/components/ui/calendar";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,12 @@ import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 
 const TZ = "Africa/Johannesburg";
+
+// Supabase client (browser) — avoids relying on a local helper file
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
 
 function dayRangeUTC(date) {
   const startLocalStr = formatInTimeZone(date, TZ, "yyyy-MM-dd 00:00:00");
@@ -20,40 +26,35 @@ function dayRangeUTC(date) {
 }
 
 export default function DayAppointments() {
-  const supabase = React.useMemo(() => createClient(), []);
   const [date, setDate] = React.useState(new Date());
   const [query, setQuery] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [items, setItems] = React.useState([]);
   const [error, setError] = React.useState(null);
 
-  const fetchForDay = React.useCallback(
-    async (d) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const { startUtc, endUtc } = dayRangeUTC(d);
-        const { data, error } = await supabase
-          .from("appointments")
-          .select("id, patient_name, starts_at, ends_at, status, notes")
-          .gte("starts_at", startUtc.toISOString())
-          .lt("starts_at", endUtc.toISOString())
-          .order("starts_at", { ascending: true });
+  const fetchForDay = React.useCallback(async (d) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { startUtc, endUtc } = dayRangeUTC(d);
+      const { data, error } = await supabase
+        .from("appointments")
+        .select("id, patient_name, starts_at, ends_at, status, notes")
+        .gte("starts_at", startUtc.toISOString())
+        .lt("starts_at", endUtc.toISOString())
+        .order("starts_at", { ascending: true });
 
-        if (error) throw error;
-        setItems(Array.isArray(data) ? data : []);
-      } catch (e) {
-        setError(e?.message || "Failed to load appointments");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [supabase]
-  );
+      if (error) throw error;
+      setItems(Array.isArray(data) ? data : []);
+    } catch (e) {
+      // Shows RLS/permission errors cleanly if not authenticated
+      setError(e?.message || "Failed to load appointments");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  React.useEffect(() => {
-    fetchForDay(date);
-  }, [date, fetchForDay]);
+  React.useEffect(() => { fetchForDay(date); }, [date, fetchForDay]);
 
   const filtered = React.useMemo(() => {
     if (!query) return items;
@@ -66,11 +67,7 @@ export default function DayAppointments() {
   }, [items, query]);
 
   return (
-    <div className="grid gap-4 md:grid-cols-12 border border-dashed p-3 rounded-xl bg-white">
-      <div className="text-sm mb-2 text-slate-700 font-medium">
-        [DayAppointments mounted] — Pick a date:
-      </div>
-
+    <div className="grid gap-4 md:grid-cols-12 rounded-xl bg-white">
       {/* Left: Calendar */}
       <Card className="md:col-span-4 lg:col-span-3 p-3">
         <Calendar
@@ -82,7 +79,7 @@ export default function DayAppointments() {
         />
       </Card>
 
-      {/* Right: List */}
+      {/* Right: Appointments list */}
       <Card className="md:col-span-8 lg:col-span-9 p-3">
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="text-sm font-semibold">
@@ -122,11 +119,7 @@ export default function DayAppointments() {
                       {formatInTimeZone(new Date(a.starts_at), TZ, "HH:mm")} —{" "}
                       {a.ends_at
                         ? formatInTimeZone(new Date(a.ends_at), TZ, "HH:mm zzz")
-                        : formatInTimeZone(
-                            new Date(a.starts_at),
-                            TZ,
-                            "HH:mm zzz"
-                          )}
+                        : formatInTimeZone(new Date(a.starts_at), TZ, "HH:mm zzz")}
                     </div>
                     {a.notes && (
                       <div className="text-xs text-muted-foreground line-clamp-2">
