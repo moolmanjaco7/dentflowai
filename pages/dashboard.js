@@ -1,30 +1,12 @@
 // pages/dashboard.js
 import Head from 'next/head'
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
-import Link from 'next/link'
-import dynamic from "next/dynamic";
-const DayAppointments = dynamic(() => import("@/components/DayAppointments"), { ssr: false });
+import dynamic from "next/dynamic"
 
-export default function Dashboard() {
-  // ...state/effects above...
-  return (
-    <>
-      <Head><title>DentFlow AI — Dashboard</title></Head>
-      <main className="min-h-screen bg-slate-50">
-        <section className="max-w-6xl mx-auto px-4 py-8">
-          {/* 👇 Add this one line */}
-          <DayAppointments />
-
-          {/* Your existing content */}
-          <h1 className="text-2xl font-bold">Today’s Appointments</h1>
-          {/* ... */}
-        </section>
-      </main>
-    </>
-  );
-}
-
+// Load the small calendar + day list (client-only)
+const DayAppointments = dynamic(() => import("@/components/DayAppointments"), { ssr: false })
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -45,13 +27,12 @@ export default function Dashboard() {
         const { data: { session } } = await supabase.auth.getSession()
         if (!mounted) return
         if (!session) {
-          // no session → go to login
           window.location.href = '/auth/login'
           return
         }
         setSession(session)
 
-        // Load data for "today" in SA time
+        // Load data for "today" in SA time (existing logic)
         const tz = 'Africa/Johannesburg'
         const now = new Date(new Date().toLocaleString('en-ZA', { timeZone: tz }))
         const start = new Date(now); start.setHours(0,0,0,0)
@@ -112,19 +93,25 @@ export default function Dashboard() {
 
   return (
     <>
-      <Head>
-        <title>DentFlow AI — Dashboard</title>
-      </Head>
+      <Head><title>DentFlow AI — Dashboard</title></Head>
       <main className="min-h-screen bg-slate-50">
         <section className="max-w-6xl mx-auto px-4 py-8">
-          <h1 className="text-2xl font-bold text-slate-900">Today’s Appointments</h1>
+          {/* Small day picker + daily appointments */}
+          <DayAppointments />
+
+          {/* (Optional) keep or remove your existing “Today’s Appointments” block */}
+          <h1 className="text-2xl font-bold text-slate-900 mt-8">Today’s Appointments</h1>
           {appointments.length === 0 ? (
             <p className="mt-2 text-sm text-slate-600">No appointments today.</p>
           ) : (
             <div className="mt-4 grid md:grid-cols-2 gap-3">
               {appointments.map(a => (
                 <div key={a.id} className="bg-white border rounded-2xl p-4">
-                  <div className="text-sm text-slate-500">{new Date(a.starts_at).toLocaleTimeString('en-ZA', {hour:'2-digit', minute:'2-digit'})} – {new Date(a.ends_at).toLocaleTimeString('en-ZA', {hour:'2-digit', minute:'2-digit'})}</div>
+                  <div className="text-sm text-slate-500">
+                    {new Date(a.starts_at).toLocaleTimeString('en-ZA', {hour:'2-digit', minute:'2-digit'})}
+                    {' – '}
+                    {new Date(a.ends_at).toLocaleTimeString('en-ZA', {hour:'2-digit', minute:'2-digit'})}
+                  </div>
                   <div className="font-semibold">{a.title || 'Appointment'}</div>
                   <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">{a.status}</div>
                 </div>
