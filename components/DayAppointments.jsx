@@ -4,7 +4,6 @@ import * as React from "react";
 import { addDays, format } from "date-fns";
 import { formatInTimeZone, zonedTimeToUtc } from "date-fns-tz";
 import { createClient } from "@/lib/supabaseClient";
-
 import { Calendar } from "@/components/ui/calendar";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +12,6 @@ import { Input } from "@/components/ui/input";
 
 const TZ = "Africa/Johannesburg";
 
-// Compute the UTC range for the selected local day
 function dayRangeUTC(date) {
   const startLocalStr = formatInTimeZone(date, TZ, "yyyy-MM-dd 00:00:00");
   const startUtc = zonedTimeToUtc(startLocalStr, TZ);
@@ -68,10 +66,13 @@ export default function DayAppointments() {
   }, [items, query]);
 
   return (
-    <div className="grid gap-4 md:grid-cols-12">
-      {/* Left: calendar */}
+    <div className="grid gap-4 md:grid-cols-12 border border-dashed p-3 rounded-xl bg-white">
+      <div className="text-sm mb-2 text-slate-700 font-medium">
+        [DayAppointments mounted] — Pick a date:
+      </div>
+
+      {/* Left: Calendar */}
       <Card className="md:col-span-4 lg:col-span-3 p-3">
-        <div className="text-sm font-medium mb-2">Pick a day</div>
         <Calendar
           mode="single"
           selected={date}
@@ -81,10 +82,10 @@ export default function DayAppointments() {
         />
       </Card>
 
-      {/* Right: list */}
+      {/* Right: List */}
       <Card className="md:col-span-8 lg:col-span-9 p-3">
         <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="text-sm font-medium">
+          <div className="text-sm font-semibold">
             {format(date, "EEE, dd MMM yyyy")} — Appointments
           </div>
           <Input
