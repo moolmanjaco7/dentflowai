@@ -3,24 +3,25 @@ import Head from 'next/head'
 import { useEffect, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Link from 'next/link'
-import DayAppointments from "./components/DayAppointments";
 import dynamic from "next/dynamic";
-const DayAppointments = dynamic(() => import("@/components/DayAppointments."), { ssr: false });
+const DayAppointments = dynamic(() => import("@/components/DayAppointments"), { ssr: false });
 
-export default function DashboardPage() {
+export default function Dashboard() {
+  // ...state/effects above...
   return (
-    <main className="p-4 space-y-4">
-      <DayAppointments />
-    </main>
-  );
-}
+    <>
+      <Head><title>DentFlow AI — Dashboard</title></Head>
+      <main className="min-h-screen bg-slate-50">
+        <section className="max-w-6xl mx-auto px-4 py-8">
+          {/* 👇 Add this one line */}
+          <DayAppointments />
 
-export default function DashboardPage() {
-  return (
-    <main className="p-4 space-y-4">
-      <DayAppointments />
-      {/* other dashboard cards */}
-    </main>
+          {/* Your existing content */}
+          <h1 className="text-2xl font-bold">Today’s Appointments</h1>
+          {/* ... */}
+        </section>
+      </main>
+    </>
   );
 }
 
