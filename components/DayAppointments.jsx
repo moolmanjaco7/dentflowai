@@ -18,7 +18,7 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-/** UI <-> DB status mapping (kept from your working version) */
+/** UI <-> DB status mapping (from your working version) */
 const UI_STATUS = ["scheduled", "confirmed", "checked_in", "completed", "no_show", "cancelled"];
 const STATUS_LABEL = {
   scheduled: "Scheduled",
@@ -68,6 +68,10 @@ export default function DayAppointments() {
   const [items, setItems] = React.useState([]); // items use UI status strings
   const [error, setError] = React.useState(null);
   const [savingId, setSavingId] = React.useState(null);
+
+  // inline notes editor state
+  const [editingId, setEditingId] = React.useState(null);
+  const [draftNotes, setDraftNotes] = React.useState("");
 
   const fetchForDay = React.useCallback(async (d) => {
     setLoading(true);
@@ -130,7 +134,7 @@ export default function DayAppointments() {
     });
   }, [items, query, statusFilter]);
 
-  // --- Summary counts (UX polish) ---
+  // Summary counts
   const summary = React.useMemo(() => {
     const counts = { total: items.length };
     for (const key of UI_STATUS) counts[key] = 0;
@@ -138,12 +142,11 @@ export default function DayAppointments() {
     return counts;
   }, [items]);
 
-  // --- Status update (kept from working version) ---
+  // Status update (optimistic)
   async function updateStatus(id, newUIStatusRaw) {
     const newUIStatus = normalizeUIStatus(newUIStatusRaw);
     const newDBStatus = UI_TO_DB[newUIStatus] || "booked";
 
-    // optimistic update
     const prev = items;
     setSavingId(id);
     setItems((list) => list.map((it) => (it.id === id ? { ...it, status: newUIStatus } : it)));
@@ -164,10 +167,49 @@ export default function DayAppointments() {
     }
   }
 
-  // --- Date navigation (UX polish) ---
+  // Notes update (inline, optimistic)
+  async function saveNotes(id, newNotes) {
+    const prev = items;
+    setSavingId(id);
+    setItems((list) => list.map((it) => (it.id === id ? { ...it, notes: newNotes } : it)));
+    try {
+      const { error: upErr } = await supabase
+        .from("appointments")
+        .update({ notes: newNotes })
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
+      if (upErr) throw upErr;
+    } catch (e) {
+      setItems(prev); // revert
+      setError(e?.message || "Failed to update notes");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  // Date navigation
   function goPrev() { setDate((d) => addDays(d, -1)); }
   function goNext() { setDate((d) => addDays(d, 1)); }
   function goToday() { setDate(new Date()); }
+
+  // Handle starting notes edit
+  function startEditNotes(item) {
+    setEditingId(item.id);
+    setDraftNotes(item.notes || "");
+  }
+  // Commit notes (blur or Enter)
+  async function commitNotes() {
+    const id = editingId;
+    const text = draftNotes;
+    setEditingId(null);
+    if (id != null) await saveNotes(id, text);
+  }
+  // Cancel notes (Esc)
+  function cancelNotes() {
+    setEditingId(null);
+    setDraftNotes("");
+  }
 
   return (
     <div className="grid gap-4 md:grid-cols-12 rounded-xl bg-white">
@@ -250,8 +292,40 @@ export default function DayAppointments() {
                         ? formatInTimeZone(new Date(a.ends_at), TZ, "HH:mm zzz")
                         : formatInTimeZone(new Date(a.starts_at), TZ, "HH:mm zzz")}
                     </div>
-                    {a.notes && (
-                      <div className="text-xs text-muted-foreground line-clamp-2">{a.notes}</div>
+
+                    {/* Inline notes editor */}
+                    {editingId === a.id ? (
+                      <textarea
+                        autoFocus
+                        value={draftNotes}
+                        onChange={(e) => setDraftNotes(e.target.value)}
+                        onBlur={commitNotes}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            e.currentTarget.blur(); // triggers commitNotes
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelNotes();
+                          }
+                        }}
+                        className="w-full text-xs border rounded-md p-2"
+                        placeholder="Type notes…"
+                        rows={3}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startEditNotes(a)}
+                        className="text-left text-xs text-slate-600 hover:text-slate-800"
+                        title="Click to edit notes"
+                      >
+                        {a.notes ? (
+                          <span>{a.notes}</span>
+                        ) : (
+                          <span className="italic text-slate-400">Add note…</span>
+                        )}
+                      </button>
                     )}
                   </div>
 
