@@ -60,6 +60,15 @@ export default function NewAppointmentModal({ defaultDate, onCreated, fixedPatie
       if (Array.isArray(data)) setPatients(data);
     })();
   }, [fixedPatientId]);
+async function hasOverlap(startsAtIso, endsAtIso) {
+  // ask DB if anything overlaps this interval
+  const { data, error } = await supabase
+    .from("appointments")
+    .select("id")
+    .overlaps("time_range", [startsAtIso, endsAtIso]); // Supabase supports overlaps with tstzrange
+  if (error) return false; // be permissive if network hiccup; DB constraint still catches
+  return Array.isArray(data) && data.length > 0;
+}
 
   // close on ESC
   React.useEffect(() => {
@@ -75,61 +84,85 @@ export default function NewAppointmentModal({ defaultDate, onCreated, fixedPatie
   }
 
   async function handleCreate() {
-    setLoading(true);
-    setError("");
+  setLoading(true);
+  setError("");
 
-    try {
-      const effectivePatientId = fixedPatientId || patientId;
-      if (!effectivePatientId) throw new Error("Please choose a patient");
-      if (!startTime || !endTime) throw new Error("Please set start and end time");
+  try {
+    const effectivePatientId = fixedPatientId || patientId;
+    if (!effectivePatientId) throw new Error("Please choose a patient");
+    if (!startTime || !endTime) throw new Error("Please set start and end time");
 
-      const startsAtUtc = toDate(localStr(defaultDate, startTime), { timeZone: TZ });
-      const endsAtUtc = toDate(localStr(defaultDate, endTime), { timeZone: TZ });
-      if (endsAtUtc <= startsAtUtc) throw new Error("End time must be after start time");
+    const startsAtUtc = toDate(localStr(defaultDate, startTime), { timeZone: TZ });
+    const endsAtUtc   = toDate(localStr(defaultDate, endTime),   { timeZone: TZ });
+    if (endsAtUtc <= startsAtUtc) throw new Error("End time must be after start time");
 
-      const dbStatus = toDbStatus(status);
-<select value={status} onChange={(e)=>setStatus(normalizeUiStatus(e.target.value))} className="border rounded-md px-2 py-2 text-sm bg-white">
-  {UI_STATUS.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-</select>
-
-
-      const { error: insErr } = await supabase
-        .from("appointments")
-        .insert({
-          title: title || "Appointment",
-          patient_id: effectivePatientId,
-          status: dbStatus,
-          notes: notes || null,
-          starts_at: startsAtUtc.toISOString(),
-          ends_at: endsAtUtc.toISOString(),
-        })
-        .select("id")
-        .maybeSingle();
-
-      if (insErr) throw insErr;
-
-      // reset (but keep fixedPatientId untouched)
-      setTitle("");
-      setPatientId(fixedPatientId || "");
-      setStatus("scheduled");
-      setNotes("");
-      setStartTime("09:00");
-      setEndTime("09:30");
-      setOpen(false);
-
-      window.dispatchEvent(new CustomEvent("toast", {
-        detail: { title: "Appointment created", type: "success" }
-      }));
-      onCreated?.();
-    } catch (e) {
-      setError(e?.message || "Failed to create appointment");
-      window.dispatchEvent(new CustomEvent("toast", {
-        detail: { title: "Failed to create appointment", type: "error" }
-      }));
-    } finally {
-      setLoading(false);
+    // ✅ Working hours guard (edit times to your clinic hours)
+    const OPEN = 8;  // 08:00
+    const CLOSE = 18; // 18:00
+    const sH = startsAtUtc.getUTCHours();
+    const eH = endsAtUtc.getUTCHours();
+    // Convert working hours to TZ by comparing in local TZ
+    const localStart = new Date(startsAtUtc.toLocaleString("en-ZA", { timeZone: TZ }));
+    const localEnd   = new Date(endsAtUtc.toLocaleString("en-ZA", { timeZone: TZ }));
+    const lsH = localStart.getHours();
+    const leH = localEnd.getHours();
+    if (lsH < OPEN || leH > CLOSE || (leH === CLOSE && localEnd.getMinutes() > 0)) {
+      throw new Error(`Outside working hours (${String(OPEN).padStart(2,"0")}:00–${CLOSE}:00)`);
     }
+
+    // ✅ Client-side overlap check (DB still enforces)
+    const startISO = startsAtUtc.toISOString();
+    const endISO   = endsAtUtc.toISOString();
+    if (await hasOverlap(startISO, endISO)) {
+      throw new Error("This time overlaps another appointment");
+    }
+
+    const dbStatus = toDbStatus(status);
+
+    const { error: insErr } = await supabase
+      .from("appointments")
+      .insert({
+        title: title || "Appointment",
+        patient_id: effectivePatientId,
+        status: dbStatus,
+        notes: notes || null,
+        starts_at: startISO,
+        ends_at: endISO,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (insErr) {
+      // If DB overlap constraint triggers:
+      if (insErr.code === "23P01") {
+        throw new Error("This time overlaps another appointment");
+      }
+      throw insErr;
+    }
+
+    // reset and close
+    setTitle("");
+    setPatientId(fixedPatientId || "");
+    setStatus("scheduled");
+    setNotes("");
+    setStartTime("09:00");
+    setEndTime("09:30");
+    setOpen(false);
+
+    window.dispatchEvent(new CustomEvent("toast", {
+      detail: { title: "Appointment created", type: "success" }
+    }));
+    onCreated?.();
+  } catch (e) {
+    setError(e?.message || "Failed to create appointment");
+    window.dispatchEvent(new CustomEvent("toast", {
+      detail: { title: e?.message || "Failed to create appointment", type: "error" }
+    }));
+  } finally {
+    setLoading(false);
   }
+}
+
 
   return (
     <>
