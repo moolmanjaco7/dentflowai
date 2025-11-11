@@ -3,37 +3,32 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
-import { addDays, format } from "date-fns";
 import { formatInTimeZone } from "date-fns-tz";
 import { createClient } from "@supabase/supabase-js";
+
+import Toasts from "@/components/Toast";
+import NewAppointmentModal from "@/components/NewAppointmentModal";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import Toasts from "@/components/Toast";
-import NewAppointmentModal from "@/components/NewAppointmentModal";
+
+// ✅ Centralized status utilities
+import {
+  UI_STATUS,
+  STATUS_LABEL,
+  normalizeUiStatus,
+  toDbStatus,
+  toUiStatus,
+} from "@/lib/status";
 
 const TZ = "Africa/Johannesburg";
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// status mapping (reuse from dashboard)
-const UI_STATUS = ["scheduled","confirmed","checked_in","completed","no_show","cancelled"];
-const STATUS_LABEL = { scheduled:"Scheduled", confirmed:"Confirmed", checked_in:"Checked-in", completed:"Completed", no_show:"No Show", cancelled:"Cancelled" };
-const UI_TO_DB = { scheduled:"booked", confirmed:"confirmed", checked_in:"checked_in", completed:"completed", no_show:"no_show", cancelled:"cancelled" };
-const DB_TO_UI = { booked:"scheduled", confirmed:"confirmed", checked_in:"checked_in", completed:"completed", no_show:"no_show", cancelled:"cancelled" };
-
-function normalizeUIStatus(s){
-  if(!s) return "scheduled";
-  const x=String(s).toLowerCase().trim().replaceAll("-","_");
-  if(x==="noshow"||x==="no show") return "no_show";
-  if(x==="checked in"||x==="checkedin") return "checked_in";
-  return UI_STATUS.includes(x)?x:"scheduled";
-}
-
-export default function PatientDetailsPage(){
+export default function PatientDetailsPage() {
   const router = useRouter();
   const { id } = router.query;
 
@@ -46,95 +41,114 @@ export default function PatientDetailsPage(){
   const [history, setHistory] = useState([]);   // starts_at < now
   const [statusSaving, setStatusSaving] = useState(null);
 
-  async function load(){
-    if(!id) return;
-    setLoading(true); setErr("");
-    try{
-      const { data:{ session } } = await supabase.auth.getSession();
-      if(!session){
-        if (typeof window !== "undefined") window.location.href="/auth/login";
+  async function load() {
+    if (!id) return;
+    setLoading(true);
+    setErr("");
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        if (typeof window !== "undefined") window.location.href = "/auth/login";
         return;
       }
       setSession(session);
 
-      // patient
+      // Patient
       const { data: p, error: pErr } = await supabase
         .from("patients")
         .select("id, full_name, email, phone")
         .eq("id", id)
         .maybeSingle();
-      if(pErr) throw pErr;
+      if (pErr) throw pErr;
       setPatient(p);
 
-      // time split
-      const now = new Date();
-      const nowIso = now.toISOString();
+      // Time split
+      const nowIso = new Date().toISOString();
 
-      // upcoming (today forward)
+      // Upcoming
       const { data: up, error: upErr } = await supabase
         .from("appointments")
         .select("id, title, starts_at, ends_at, status, notes")
         .eq("patient_id", id)
         .gte("starts_at", nowIso)
         .order("starts_at", { ascending: true });
-      if(upErr) throw upErr;
+      if (upErr) throw upErr;
 
-      // history (past)
+      // History
       const { data: hist, error: hErr } = await supabase
         .from("appointments")
         .select("id, title, starts_at, ends_at, status, notes")
         .eq("patient_id", id)
         .lt("starts_at", nowIso)
         .order("starts_at", { ascending: false });
-      if(hErr) throw hErr;
+      if (hErr) throw hErr;
 
-      const hydrate = (rows)=> (Array.isArray(rows)?rows:[]).map(a=>{
-        const dbStatus=(a.status||"").toLowerCase().trim().replaceAll("-","_");
-        const uiStatus=DB_TO_UI[dbStatus] || normalizeUIStatus(dbStatus);
-        return { ...a, status: uiStatus };
-      });
+      const hydrate = (rows) =>
+        (Array.isArray(rows) ? rows : []).map((a) => ({
+          ...a,
+          status: toUiStatus(a.status), // ✅ DB → UI safe mapping
+        }));
 
       setUpcoming(hydrate(up));
       setHistory(hydrate(hist));
-    }catch(e){
+    } catch (e) {
       setErr(e?.message || "Failed to load patient");
-    }finally{
+    } finally {
       setLoading(false);
     }
   }
 
-  useEffect(()=>{ load(); },[id]);
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
-  const stats = useMemo(()=>{
+  const stats = useMemo(() => {
     const all = [...upcoming, ...history];
-    const s = { total: all.length, scheduled:0, confirmed:0, checked_in:0, completed:0, no_show:0, cancelled:0 };
-    for(const a of all) s[normalizeUIStatus(a.status)]++;
+    const s = {
+      total: all.length,
+      scheduled: 0,
+      confirmed: 0,
+      checked_in: 0,
+      completed: 0,
+      no_show: 0,
+      cancelled: 0,
+    };
+    for (const a of all) s[normalizeUiStatus(a.status)]++;
     return s;
-  },[upcoming, history]);
+  }, [upcoming, history]);
 
-  async function changeStatus(aptId, newUiStatus){
-    const newDb = UI_TO_DB[normalizeUIStatus(newUiStatus)] || "booked";
-    const prevU = upcoming, prevH = history;
+  async function changeStatus(aptId, newUiStatus) {
+    const newDb = toDbStatus(newUiStatus); // ✅ UI → DB safe mapping
+    const prevU = upcoming;
+    const prevH = history;
+
     setStatusSaving(aptId);
 
-    // optimistic
-    setUpcoming(list => list.map(a => a.id === aptId ? { ...a, status: normalizeUIStatus(newUiStatus) } : a));
-    setHistory(list => list.map(a => a.id === aptId ? { ...a, status: normalizeUIStatus(newUiStatus) } : a));
+    // optimistic update
+    const norm = normalizeUiStatus(newUiStatus);
+    setUpcoming((list) => list.map((a) => (a.id === aptId ? { ...a, status: norm } : a)));
+    setHistory((list) => list.map((a) => (a.id === aptId ? { ...a, status: norm } : a)));
 
-    try{
+    try {
       const { error } = await supabase
         .from("appointments")
         .update({ status: newDb })
         .eq("id", aptId)
         .select("id")
         .maybeSingle();
-      if(error) throw error;
-      window.dispatchEvent(new CustomEvent("toast", { detail:{ title:"Status updated", type:"success" }}));
-    }catch(e){
+      if (error) throw error;
+      window.dispatchEvent(
+        new CustomEvent("toast", { detail: { title: "Status updated", type: "success" } })
+      );
+    } catch (e) {
       // revert
-      setUpcoming(prevU); setHistory(prevH);
-      window.dispatchEvent(new CustomEvent("toast", { detail:{ title:"Failed to update", type:"error" }}));
-    }finally{
+      setUpcoming(prevU);
+      setHistory(prevH);
+      window.dispatchEvent(
+        new CustomEvent("toast", { detail: { title: "Failed to update", type: "error" } })
+      );
+    } finally {
       setStatusSaving(null);
     }
   }
@@ -162,7 +176,9 @@ export default function PatientDetailsPage(){
                   onCreated={load}
                 />
               )}
-              <Link href="/patients" className="text-sm underline">Back to Patients</Link>
+              <Link href="/patients" className="text-sm underline">
+                Back to Patients
+              </Link>
             </div>
           </div>
 
@@ -189,7 +205,7 @@ export default function PatientDetailsPage(){
                 <div className="text-sm text-slate-600">No upcoming appointments.</div>
               ) : (
                 <ul>
-                  {upcoming.map((a, idx)=>(
+                  {upcoming.map((a, idx) => (
                     <li key={a.id}>
                       {idx !== 0 && <Separator className="my-2" />}
                       <Row a={a} changeStatus={changeStatus} statusSaving={statusSaving} />
@@ -210,7 +226,7 @@ export default function PatientDetailsPage(){
                 <div className="text-sm text-slate-600">No past appointments.</div>
               ) : (
                 <ul>
-                  {history.map((a, idx)=>(
+                  {history.map((a, idx) => (
                     <li key={a.id}>
                       {idx !== 0 && <Separator className="my-2" />}
                       <Row a={a} changeStatus={changeStatus} statusSaving={statusSaving} />
@@ -226,7 +242,7 @@ export default function PatientDetailsPage(){
   );
 }
 
-function Loader(){
+function Loader() {
   return (
     <div className="flex items-center gap-2 text-sm text-slate-600">
       <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-transparent" />
@@ -235,7 +251,7 @@ function Loader(){
   );
 }
 
-function Chip({ label, value }){
+function Chip({ label, value }) {
   return (
     <div className="text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700">
       <span className="font-medium">{label}:</span> {value ?? 0}
@@ -243,7 +259,7 @@ function Chip({ label, value }){
   );
 }
 
-function Row({ a, changeStatus, statusSaving }){
+function Row({ a, changeStatus, statusSaving }) {
   return (
     <div className="flex items-start justify-between gap-3">
       <div className="space-y-1">
@@ -261,27 +277,35 @@ function Row({ a, changeStatus, statusSaving }){
           {STATUS_LABEL[a.status] || "Scheduled"}
         </Badge>
         <select
-          value={a.status}
-          onChange={(e)=>changeStatus(a.id, e.target.value)}
+          value={normalizeUiStatus(a.status)}
+          onChange={(e) => changeStatus(a.id, e.target.value)}
           className="text-xs border rounded-md px-2 py-1 bg-white"
           disabled={statusSaving === a.id}
           aria-label="Change status"
         >
-          {UI_STATUS.map(s=><option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+          {UI_STATUS.map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABEL[s]}
+            </option>
+          ))}
         </select>
       </div>
     </div>
   );
 }
 
-function badgeVariant(uiStatus){
-  switch (normalizeUIStatus(uiStatus)){
+function badgeVariant(uiStatus) {
+  switch (normalizeUiStatus(uiStatus)) {
     case "confirmed":
-    case "checked_in": return "default";
-    case "completed": return "secondary";
+    case "checked_in":
+      return "default";
+    case "completed":
+      return "secondary";
     case "cancelled":
-    case "no_show": return "destructive";
+    case "no_show":
+      return "destructive";
     case "scheduled":
-    default: return "outline";
+    default:
+      return "outline";
   }
 }

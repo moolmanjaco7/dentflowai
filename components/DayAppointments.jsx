@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import Toasts from "@/components/Toast"; // 👈 toast host
+import { UI_STATUS, STATUS_LABEL, normalizeUiStatus, toDbStatus, toUiStatus } from "@/lib/status";
 
 const TZ = "Africa/Johannesburg";
 const supabase = createClient(
@@ -80,15 +81,12 @@ export default function DayAppointments(){
         }
       }
 
-      const hydrated = appointments.map(a=>{
-        const dbStatus=(a.status||"").toLowerCase().trim().replaceAll("-","_");
-        const uiStatus=DB_TO_UI[dbStatus]||normalizeUIStatus(dbStatus);
-        return {
-          ...a,
-          display_name: patientMap.get(a.patient_id) || a.title || "(No name)",
-          status: uiStatus,
-        };
-      });
+      const hydrated = appointments.map(a => ({
+  ...a,
+  display_name: patientMap.get(a.patient_id) || a.title || "(No name)",
+  status: toUiStatus(a.status),
+}));
+
 
       setItems(hydrated);
     }catch(e){
@@ -119,8 +117,8 @@ export default function DayAppointments(){
   },[filtered]);
 
   async function updateStatus(id, newUIStatusRaw){
-    const newUIStatus = normalizeUIStatus(newUIStatusRaw);
-    const newDBStatus = UI_TO_DB[newUIStatus] || "booked";
+  const newUIStatus = normalizeUiStatus(newUIStatusRaw);
+  const newDBStatus = toDbStatus(newUIStatus);
     const prev = items;
     setSavingId(id);
     setItems(list=>list.map(it=>it.id===id?{...it, status:newUIStatus}:it));
@@ -215,7 +213,8 @@ export default function DayAppointments(){
               aria-label="Filter by status"
             >
               <option value="all">All statuses</option>
-              {UI_STATUS.map((s)=><option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+              {UI_STATUS.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+
             </select>
           </div>
         </div>

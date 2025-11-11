@@ -5,6 +5,8 @@ import { format } from "date-fns";
 import { toDate } from "date-fns-tz";
 import { createClient } from "@supabase/supabase-js";
 import { Input } from "@/components/ui/input";
+import { UI_STATUS, STATUS_LABEL, normalizeUiStatus, toDbStatus } from "@/lib/status";
+
 
 const TZ = "Africa/Johannesburg";
 
@@ -85,7 +87,11 @@ export default function NewAppointmentModal({ defaultDate, onCreated, fixedPatie
       const endsAtUtc = toDate(localStr(defaultDate, endTime), { timeZone: TZ });
       if (endsAtUtc <= startsAtUtc) throw new Error("End time must be after start time");
 
-      const dbStatus = UI_TO_DB[status] || "booked";
+      const dbStatus = toDbStatus(status);
+<select value={status} onChange={(e)=>setStatus(normalizeUiStatus(e.target.value))} className="border rounded-md px-2 py-2 text-sm bg-white">
+  {UI_STATUS.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+</select>
+
 
       const { error: insErr } = await supabase
         .from("appointments")
