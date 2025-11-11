@@ -102,6 +102,11 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
       setEndTime("09:30");
       setOpen(false);
 
+// ✅ toast + refresh
+      window.dispatchEvent(new CustomEvent("toast", {
+        detail: { title: "Appointment created", type: "success" }
+      }));
+
       onCreated?.();
     } catch (e) {
       setError(e?.message || "Failed to create appointment");
