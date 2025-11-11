@@ -42,22 +42,13 @@ export default function SiteHeader() {
           <span className="inline-block h-6 w-6 rounded bg-slate-900" />
           <span>DentFlow AI</span>
         </Link>
-
         <nav className="flex items-center gap-2">
-          {/* Always show these so it's obvious */}
-          <Link
-            href="/dashboard"
-            className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50"
-          >
+          <Link href="/dashboard" className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50">
             Dashboard
           </Link>
-          <Link
-            href="/patients"
-            className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50"
-          >
+          <Link href="/patients" className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50">
             Patients
           </Link>
-
           {session ? (
             <button
               onClick={logout}
@@ -66,10 +57,7 @@ export default function SiteHeader() {
               Logout
             </button>
           ) : (
-            <Link
-              href="/auth/login"
-              className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50"
-            >
+            <Link href="/auth/login" className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50">
               Login
             </Link>
           )}

@@ -9,7 +9,7 @@ import CookieNotice from "../components/CookieNotice";
 import SiteFooter from "../components/SiteFooter";
 
 // ✅ Single, canonical import for the header
-import SiteHeader from "@/components/SiteHeader";
+import SiteHeader from "@/components/SiteHeader.jsx";
 
 export default function App({ Component, pageProps }) {
   // Google Analytics boot (kept from your file)
@@ -40,12 +40,12 @@ export default function App({ Component, pageProps }) {
 
     <ErrorBoundary>
       <SiteHeader />
-      {/* 👇 ensures content is pushed below the 56px header */}
-      <div className="pt-14">
-        <Component {...pageProps} />
-        <CookieNotice />
-        <SiteFooter />
-      </div>
+<div className="pt-14">
+  <Component {...pageProps} />
+  <CookieNotice />
+  <SiteFooter />
+</div>
+
     </ErrorBoundary>
   </>
 );
