@@ -33,17 +33,20 @@ export default function App({ Component, pageProps }) {
   }, []);
 
   return (
-    <>
-      <Head>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-      </Head>
+  <>
+    <Head>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+    </Head>
 
-      <ErrorBoundary>
-        <SiteHeader />
+    <ErrorBoundary>
+      <SiteHeader />
+      {/* 👇 ensures content is pushed below the 56px header */}
+      <div className="pt-14">
         <Component {...pageProps} />
         <CookieNotice />
         <SiteFooter />
-      </ErrorBoundary>
-    </>
-  );
+      </div>
+    </ErrorBoundary>
+  </>
+);
 }
