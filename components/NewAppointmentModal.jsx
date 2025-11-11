@@ -4,11 +4,7 @@ import * as React from "react";
 import { format } from "date-fns";
 import { toDate } from "date-fns-tz";
 import { createClient } from "@supabase/supabase-js";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input"; // you already have this
 
 const TZ = "Africa/Johannesburg";
 
@@ -18,7 +14,7 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// UI -> DB statuses (kept consistent with DayAppointments)
+// Map UI -> DB status values
 const UI_TO_DB = {
   scheduled: "booked",
   confirmed: "confirmed",
@@ -41,23 +37,29 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
   const [startTime, setStartTime] = React.useState("09:00");
   const [endTime, setEndTime] = React.useState("09:30");
 
-  // patient list
+  // patients
   const [patients, setPatients] = React.useState([]);
 
   React.useEffect(() => {
-    // load a dropdown of patients
     (async () => {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("patients")
         .select("id, full_name")
         .order("full_name", { ascending: true })
         .limit(200);
-      if (!error && Array.isArray(data)) setPatients(data);
+      if (Array.isArray(data)) setPatients(data);
     })();
   }, []);
 
+  // close on ESC
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   function localStr(dateObj, timeHHmm) {
-    // "YYYY-MM-DD HH:mm:00" string in local SA time, converted to UTC date via toDate()
     const d = format(defaultDate ?? dateObj ?? new Date(), "yyyy-MM-dd");
     return `${d} ${timeHHmm}:00`;
   }
@@ -67,7 +69,6 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
     setError("");
 
     try {
-      // Basic validation
       if (!patientId) throw new Error("Please choose a patient");
       if (!startTime || !endTime) throw new Error("Please set start and end time");
 
@@ -92,7 +93,7 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
 
       if (insErr) throw insErr;
 
-      // Reset & close
+      // reset & close
       setTitle("");
       setPatientId("");
       setStatus("scheduled");
@@ -101,7 +102,6 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
       setEndTime("09:30");
       setOpen(false);
 
-      // Tell parent to refresh
       onCreated?.();
     } catch (e) {
       setError(e?.message || "Failed to create appointment");
@@ -111,83 +111,126 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button className="text-sm">+ New Appointment</Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New Appointment</DialogTitle>
-        </DialogHeader>
+    <>
+      <button
+        className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50"
+        onClick={() => setOpen(true)}
+      >
+        + New Appointment
+      </button>
 
-        <div className="grid gap-3">
-          <div className="grid gap-1">
-            <Label>Patient</Label>
-            <select
-              value={patientId}
-              onChange={(e) => setPatientId(e.target.value)}
-              className="border rounded-md px-2 py-2 text-sm bg-white"
-            >
-              <option value="">Select a patient…</option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>{p.full_name}</option>
-              ))}
-            </select>
-          </div>
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          aria-modal="true"
+          role="dialog"
+        >
+          {/* backdrop */}
+          <div className="absolute inset-0 bg-black/40" onClick={() => setOpen(false)} />
 
-          <div className="grid gap-1">
-            <Label>Title</Label>
-            <Input placeholder="Eg. Check-up / Cleaning" value={title} onChange={(e) => setTitle(e.target.value)} />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1">
-              <Label>Start</Label>
-              <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-            </div>
-            <div className="grid gap-1">
-              <Label>End</Label>
-              <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="grid gap-1">
-              <Label>Status</Label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="border rounded-md px-2 py-2 text-sm bg-white"
+          {/* modal */}
+          <div className="relative z-10 w-full max-w-lg rounded-xl bg-white shadow-xl border p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-lg font-semibold">New Appointment</h2>
+              <button
+                className="rounded px-2 py-1 text-sm hover:bg-slate-100"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
               >
-                <option value="scheduled">Scheduled</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="checked_in">Checked-in</option>
-                <option value="completed">Completed</option>
-                <option value="no_show">No Show</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
+                ✕
+              </button>
             </div>
-            <div className="grid gap-1">
-              <Label>Date</Label>
-              <Input value={format(defaultDate ?? new Date(), "yyyy-MM-dd")} disabled />
+
+            <div className="grid gap-3">
+              <div className="grid gap-1">
+                <label className="text-sm font-medium">Patient</label>
+                <select
+                  value={patientId}
+                  onChange={(e) => setPatientId(e.target.value)}
+                  className="border rounded-md px-2 py-2 text-sm bg-white"
+                >
+                  <option value="">Select a patient…</option>
+                  {patients.map((p) => (
+                    <option key={p.id} value={p.id}>{p.full_name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid gap-1">
+                <label className="text-sm font-medium">Title</label>
+                <Input
+                  placeholder="Eg. Check-up / Cleaning"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1">
+                  <label className="text-sm font-medium">Start</label>
+                  <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+                </div>
+                <div className="grid gap-1">
+                  <label className="text-sm font-medium">End</label>
+                  <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-1">
+                  <label className="text-sm font-medium">Status</label>
+                  <select
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    className="border rounded-md px-2 py-2 text-sm bg-white"
+                  >
+                    <option value="scheduled">Scheduled</option>
+                    <option value="confirmed">Confirmed</option>
+                    <option value="checked_in">Checked-in</option>
+                    <option value="completed">Completed</option>
+                    <option value="no_show">No Show</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div className="grid gap-1">
+                  <label className="text-sm font-medium">Date</label>
+                  <Input value={format(defaultDate ?? new Date(), "yyyy-MM-dd")} disabled />
+                </div>
+              </div>
+
+              <div className="grid gap-1">
+                <label className="text-sm font-medium">Notes</label>
+                <textarea
+                  rows={3}
+                  placeholder="Optional notes…"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  className="w-full border rounded-md p-2 text-sm"
+                />
+              </div>
+
+              {error && <div className="text-sm text-red-600">{error}</div>}
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                className="px-3 py-2 rounded-md border bg-white hover:bg-slate-50 text-sm"
+                onClick={() => setOpen(false)}
+                disabled={loading}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-2 rounded-md bg-slate-900 text-white hover:bg-slate-800 text-sm rounded-lg"
+                onClick={handleCreate}
+                disabled={loading}
+              >
+                {loading ? "Creating…" : "Create"}
+              </button>
             </div>
           </div>
-
-          <div className="grid gap-1">
-            <Label>Notes</Label>
-            <Textarea rows={3} placeholder="Optional notes…" value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </div>
-
-          {error && <div className="text-sm text-red-600">{error}</div>}
         </div>
-
-        <DialogFooter className="mt-2">
-          <Button variant="outline" onClick={() => setOpen(false)} disabled={loading}>Cancel</Button>
-          <Button onClick={handleCreate} disabled={loading}>
-            {loading ? "Creating…" : "Create"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      )}
+    </>
   );
 }
