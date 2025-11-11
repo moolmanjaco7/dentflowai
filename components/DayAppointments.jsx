@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
+import NewAppointmentModal from "@/components/NewAppointmentModal"; // 👈 NEW
 
 const TZ = "Africa/Johannesburg";
 
@@ -69,15 +70,11 @@ export default function DayAppointments() {
   const [error, setError] = React.useState(null);
   const [savingId, setSavingId] = React.useState(null);
 
-  // inline notes editor state
-  const [editingId, setEditingId] = React.useState(null);
-  const [draftNotes, setDraftNotes] = React.useState("");
-
-  const fetchForDay = React.useCallback(async (d) => {
+  const refresh = React.useCallback(async (d) => {
     setLoading(true);
     setError(null);
     try {
-      const { startUtc, endUtc } = dayRangeUTC(d);
+      const { startUtc, endUtc } = dayRangeUTC(d || date);
 
       // 1) Fetch appointments for the day
       const { data: appts, error: apptErr } = await supabase
@@ -102,14 +99,14 @@ export default function DayAppointments() {
         }
       }
 
-      // 3) Map DB statuses -> UI statuses
+      // 3) Map DB statuses -> UI
       const hydrated = appointments.map((a) => {
         const dbStatus = (a.status || "").toLowerCase().trim().replaceAll("-", "_");
         const uiStatus = DB_TO_UI[dbStatus] || normalizeUIStatus(dbStatus);
         return {
           ...a,
           display_name: patientMap.get(a.patient_id) || a.title || "(No name)",
-          status: uiStatus, // store UI value
+          status: uiStatus,
         };
       });
 
@@ -119,9 +116,9 @@ export default function DayAppointments() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [date]);
 
-  React.useEffect(() => { fetchForDay(date); }, [date, fetchForDay]);
+  React.useEffect(() => { refresh(date); }, [date, refresh]);
 
   const filtered = React.useMemo(() => {
     return items.filter((a) => {
@@ -134,7 +131,7 @@ export default function DayAppointments() {
     });
   }, [items, query, statusFilter]);
 
-  // Summary counts
+  // Summary
   const summary = React.useMemo(() => {
     const counts = { total: items.length };
     for (const key of UI_STATUS) counts[key] = 0;
@@ -142,7 +139,7 @@ export default function DayAppointments() {
     return counts;
   }, [items]);
 
-  // Status update (optimistic)
+  // Status update
   async function updateStatus(id, newUIStatusRaw) {
     const newUIStatus = normalizeUIStatus(newUIStatusRaw);
     const newDBStatus = UI_TO_DB[newUIStatus] || "booked";
@@ -160,29 +157,8 @@ export default function DayAppointments() {
         .maybeSingle();
       if (upErr) throw upErr;
     } catch (e) {
-      setItems(prev); // revert
+      setItems(prev);
       setError(e?.message || "Failed to update status");
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  // Notes update (inline, optimistic)
-  async function saveNotes(id, newNotes) {
-    const prev = items;
-    setSavingId(id);
-    setItems((list) => list.map((it) => (it.id === id ? { ...it, notes: newNotes } : it)));
-    try {
-      const { error: upErr } = await supabase
-        .from("appointments")
-        .update({ notes: newNotes })
-        .eq("id", id)
-        .select("id")
-        .maybeSingle();
-      if (upErr) throw upErr;
-    } catch (e) {
-      setItems(prev); // revert
-      setError(e?.message || "Failed to update notes");
     } finally {
       setSavingId(null);
     }
@@ -192,24 +168,6 @@ export default function DayAppointments() {
   function goPrev() { setDate((d) => addDays(d, -1)); }
   function goNext() { setDate((d) => addDays(d, 1)); }
   function goToday() { setDate(new Date()); }
-
-  // Handle starting notes edit
-  function startEditNotes(item) {
-    setEditingId(item.id);
-    setDraftNotes(item.notes || "");
-  }
-  // Commit notes (blur or Enter)
-  async function commitNotes() {
-    const id = editingId;
-    const text = draftNotes;
-    setEditingId(null);
-    if (id != null) await saveNotes(id, text);
-  }
-  // Cancel notes (Esc)
-  function cancelNotes() {
-    setEditingId(null);
-    setDraftNotes("");
-  }
 
   return (
     <div className="grid gap-4 md:grid-cols-12 rounded-xl bg-white">
@@ -229,9 +187,9 @@ export default function DayAppointments() {
         />
       </Card>
 
-      {/* Right: List + Filters + Summary */}
+      {/* Right: Controls + List */}
       <Card className="md:col-span-8 lg:col-span-9 p-3">
-        {/* Top row: Title + Filters */}
+        {/* Top row: Title + Filters + New */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
           <div className="text-sm font-semibold">
             {format(date, "EEE, dd MMM yyyy")} — Appointments
@@ -254,6 +212,12 @@ export default function DayAppointments() {
                 <option key={s} value={s}>{STATUS_LABEL[s]}</option>
               ))}
             </select>
+
+            {/* 👇 NEW: Create appointment button */}
+            <NewAppointmentModal
+              defaultDate={date}
+              onCreated={() => refresh(date)}
+            />
           </div>
         </div>
 
@@ -292,40 +256,8 @@ export default function DayAppointments() {
                         ? formatInTimeZone(new Date(a.ends_at), TZ, "HH:mm zzz")
                         : formatInTimeZone(new Date(a.starts_at), TZ, "HH:mm zzz")}
                     </div>
-
-                    {/* Inline notes editor */}
-                    {editingId === a.id ? (
-                      <textarea
-                        autoFocus
-                        value={draftNotes}
-                        onChange={(e) => setDraftNotes(e.target.value)}
-                        onBlur={commitNotes}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            e.currentTarget.blur(); // triggers commitNotes
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            cancelNotes();
-                          }
-                        }}
-                        className="w-full text-xs border rounded-md p-2"
-                        placeholder="Type notes…"
-                        rows={3}
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => startEditNotes(a)}
-                        className="text-left text-xs text-slate-600 hover:text-slate-800"
-                        title="Click to edit notes"
-                      >
-                        {a.notes ? (
-                          <span>{a.notes}</span>
-                        ) : (
-                          <span className="italic text-slate-400">Add note…</span>
-                        )}
-                      </button>
+                    {a.notes && (
+                      <div className="text-xs text-muted-foreground line-clamp-2">{a.notes}</div>
                     )}
                   </div>
 
