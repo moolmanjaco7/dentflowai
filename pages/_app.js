@@ -5,6 +5,22 @@ import CookieNotice from '../components/CookieNotice'
 import SiteFooter from '../components/SiteFooter'
 import SiteHeader from '../components/SiteHeader'
 import ErrorBoundary from '../components/ErrorBoundary'
+// pages/_app.js
+import "@/styles/globals.css";
+import Head from "next/head";
+import SiteHeader from "@/components/SiteHeader";
+
+export default function App({ Component, pageProps }) {
+  return (
+    <>
+      <Head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </Head>
+      <SiteHeader />
+      <Component {...pageProps} />
+    </>
+  );
+}
 
 export default function MyApp({ Component, pageProps }) {
   useEffect(() => {
