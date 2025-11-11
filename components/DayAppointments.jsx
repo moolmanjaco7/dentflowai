@@ -18,16 +18,8 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// Our canonical set of statuses and nice labels
-const STATUS_ORDER = [
-  "scheduled",
-  "confirmed",
-  "checked_in",
-  "completed",
-  "no_show",
-  "cancelled",
-];
-
+/** UI <-> DB status mapping (kept from your working version) */
+const UI_STATUS = ["scheduled", "confirmed", "checked_in", "completed", "no_show", "cancelled"];
 const STATUS_LABEL = {
   scheduled: "Scheduled",
   confirmed: "Confirmed",
@@ -36,15 +28,29 @@ const STATUS_LABEL = {
   no_show: "No Show",
   cancelled: "Cancelled",
 };
+const UI_TO_DB = {
+  scheduled: "booked",
+  confirmed: "confirmed",
+  checked_in: "checked_in",
+  completed: "completed",
+  no_show: "no_show",
+  cancelled: "cancelled",
+};
+const DB_TO_UI = {
+  booked: "scheduled",
+  confirmed: "confirmed",
+  checked_in: "checked_in",
+  completed: "completed",
+  no_show: "no_show",
+  cancelled: "cancelled",
+};
 
-function normalizeStatus(s) {
+function normalizeUIStatus(s) {
   if (!s) return "scheduled";
-  const x = String(s).toLowerCase().trim();
-  // map common variants -> canonical
-  if (x === "no show" || x === "noshow") return "no_show";
-  if (x === "checked-in" || x === "checked in") return "checked_in";
-  if (!STATUS_ORDER.includes(x)) return "scheduled";
-  return x;
+  const x = String(s).toLowerCase().trim().replaceAll("-", "_");
+  if (x === "noshow" || x === "no show") return "no_show";
+  if (x === "checked in" || x === "checkedin") return "checked_in";
+  return UI_STATUS.includes(x) ? x : "scheduled";
 }
 
 function dayRangeUTC(date) {
@@ -59,7 +65,7 @@ export default function DayAppointments() {
   const [query, setQuery] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [loading, setLoading] = React.useState(false);
-  const [items, setItems] = React.useState([]); // each item -> { display_name, status, ... }
+  const [items, setItems] = React.useState([]); // items use UI status strings
   const [error, setError] = React.useState(null);
   const [savingId, setSavingId] = React.useState(null);
 
@@ -69,37 +75,41 @@ export default function DayAppointments() {
     try {
       const { startUtc, endUtc } = dayRangeUTC(d);
 
-      // 1) Appointments for the day
+      // 1) Fetch appointments for the day
       const { data: appts, error: apptErr } = await supabase
         .from("appointments")
         .select("id, title, starts_at, ends_at, status, notes, patient_id")
         .gte("starts_at", startUtc.toISOString())
         .lt("starts_at", endUtc.toISOString())
         .order("starts_at", { ascending: true });
-
       if (apptErr) throw apptErr;
       const appointments = Array.isArray(appts) ? appts : [];
 
-      // 2) Fetch patient names in one go
+      // 2) Fetch patient names
       const ids = [...new Set(appointments.map((a) => a.patient_id).filter(Boolean))];
       let patientMap = new Map();
       if (ids.length > 0) {
-        const { data: patients, error: patErr } = await supabase
+        const { data: patients } = await supabase
           .from("patients")
           .select("id, full_name")
           .in("id", ids);
-        if (!patErr && Array.isArray(patients)) {
+        if (Array.isArray(patients)) {
           patientMap = new Map(patients.map((p) => [p.id, p.full_name]));
         }
       }
 
-      const withNames = appointments.map((a) => ({
-        ...a,
-        display_name: patientMap.get(a.patient_id) || a.title || "(No name)",
-        status: normalizeStatus(a.status),
-      }));
+      // 3) Map DB statuses -> UI statuses
+      const hydrated = appointments.map((a) => {
+        const dbStatus = (a.status || "").toLowerCase().trim().replaceAll("-", "_");
+        const uiStatus = DB_TO_UI[dbStatus] || normalizeUIStatus(dbStatus);
+        return {
+          ...a,
+          display_name: patientMap.get(a.patient_id) || a.title || "(No name)",
+          status: uiStatus, // store UI value
+        };
+      });
 
-      setItems(withNames);
+      setItems(hydrated);
     } catch (e) {
       setError(e?.message || "Failed to load appointments");
     } finally {
@@ -107,9 +117,7 @@ export default function DayAppointments() {
     }
   }, []);
 
-  React.useEffect(() => {
-    fetchForDay(date);
-  }, [date, fetchForDay]);
+  React.useEffect(() => { fetchForDay(date); }, [date, fetchForDay]);
 
   const filtered = React.useMemo(() => {
     return items.filter((a) => {
@@ -117,41 +125,59 @@ export default function DayAppointments() {
         !query ||
         (a.display_name || "").toLowerCase().includes(query.toLowerCase()) ||
         (a.notes || "").toLowerCase().includes(query.toLowerCase());
-      const matchesStatus =
-        statusFilter === "all" ? true : normalizeStatus(a.status) === statusFilter;
+      const matchesStatus = statusFilter === "all" ? true : a.status === statusFilter;
       return matchesQuery && matchesStatus;
     });
   }, [items, query, statusFilter]);
 
-  async function updateStatus(id, newStatusRaw) {
-    const newStatus = normalizeStatus(newStatusRaw);
+  // --- Summary counts (UX polish) ---
+  const summary = React.useMemo(() => {
+    const counts = { total: items.length };
+    for (const key of UI_STATUS) counts[key] = 0;
+    for (const it of items) counts[normalizeUIStatus(it.status)]++;
+    return counts;
+  }, [items]);
+
+  // --- Status update (kept from working version) ---
+  async function updateStatus(id, newUIStatusRaw) {
+    const newUIStatus = normalizeUIStatus(newUIStatusRaw);
+    const newDBStatus = UI_TO_DB[newUIStatus] || "booked";
+
     // optimistic update
     const prev = items;
     setSavingId(id);
-    setItems((list) =>
-      list.map((it) => (it.id === id ? { ...it, status: newStatus } : it))
-    );
+    setItems((list) => list.map((it) => (it.id === id ? { ...it, status: newUIStatus } : it)));
+
     try {
       const { error: upErr } = await supabase
         .from("appointments")
-        .update({ status: newStatus })
+        .update({ status: newDBStatus })
         .eq("id", id)
         .select("id")
         .maybeSingle();
       if (upErr) throw upErr;
     } catch (e) {
-      // revert on failure
-      setItems(prev);
+      setItems(prev); // revert
       setError(e?.message || "Failed to update status");
     } finally {
       setSavingId(null);
     }
   }
 
+  // --- Date navigation (UX polish) ---
+  function goPrev() { setDate((d) => addDays(d, -1)); }
+  function goNext() { setDate((d) => addDays(d, 1)); }
+  function goToday() { setDate(new Date()); }
+
   return (
     <div className="grid gap-4 md:grid-cols-12 rounded-xl bg-white">
       {/* Left: Calendar */}
-      <Card className="md:col-span-4 lg:col-span-3 p-3">
+      <Card className="md:col-span-4 lg:col-span-3 p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <button onClick={goPrev} className="text-sm px-2 py-1 rounded border hover:bg-slate-50">← Prev</button>
+          <button onClick={goToday} className="text-sm px-2 py-1 rounded border hover:bg-slate-50">Today</button>
+          <button onClick={goNext} className="text-sm px-2 py-1 rounded border hover:bg-slate-50">Next →</button>
+        </div>
         <Calendar
           mode="single"
           selected={date}
@@ -161,8 +187,9 @@ export default function DayAppointments() {
         />
       </Card>
 
-      {/* Right: List */}
+      {/* Right: List + Filters + Summary */}
       <Card className="md:col-span-8 lg:col-span-9 p-3">
+        {/* Top row: Title + Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
           <div className="text-sm font-semibold">
             {format(date, "EEE, dd MMM yyyy")} — Appointments
@@ -174,7 +201,6 @@ export default function DayAppointments() {
               onChange={(e) => setQuery(e.target.value)}
               className="max-w-[220px]"
             />
-            {/* Status filter (native select = zero extra deps) */}
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
@@ -182,27 +208,34 @@ export default function DayAppointments() {
               aria-label="Filter by status"
             >
               <option value="all">All statuses</option>
-              {STATUS_ORDER.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABEL[s]}
-                </option>
+              {UI_STATUS.map((s) => (
+                <option key={s} value={s}>{STATUS_LABEL[s]}</option>
               ))}
             </select>
           </div>
         </div>
 
+        {/* Summary chips */}
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <SummaryChip label="Total" value={summary.total} />
+          <SummaryChip label="Scheduled" value={summary.scheduled} />
+          <SummaryChip label="Confirmed" value={summary.confirmed} />
+          <SummaryChip label="Checked-in" value={summary.checked_in} />
+          <SummaryChip label="Completed" value={summary.completed} />
+          <SummaryChip label="No Show" value={summary.no_show} />
+          <SummaryChip label="Cancelled" value={summary.cancelled} />
+        </div>
+
+        {/* Content */}
         {loading ? (
-          <div className="space-y-3">
-            <div className="h-4 w-40 bg-muted animate-pulse rounded" />
-            <div className="h-4 w-3/4 bg-muted animate-pulse rounded" />
-            <div className="h-4 w-2/3 bg-muted animate-pulse rounded" />
+          <div className="flex items-center gap-2 text-sm text-slate-600">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-transparent" />
+            Loading…
           </div>
         ) : error ? (
           <div className="text-red-600 text-sm">{error}</div>
         ) : filtered.length === 0 ? (
-          <div className="text-muted-foreground text-sm">
-            No appointments for this selection.
-          </div>
+          <div className="text-muted-foreground text-sm">No appointments for this selection.</div>
         ) : (
           <ul className="space-y-3">
             {filtered.map((a, idx) => (
@@ -210,9 +243,7 @@ export default function DayAppointments() {
                 {idx !== 0 && <Separator className="my-2" />}
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
-                    <div className="text-sm font-medium">
-                      {a.display_name}
-                    </div>
+                    <div className="text-sm font-medium">{a.display_name}</div>
                     <div className="text-xs text-muted-foreground">
                       {formatInTimeZone(new Date(a.starts_at), TZ, "HH:mm")} —{" "}
                       {a.ends_at
@@ -220,28 +251,24 @@ export default function DayAppointments() {
                         : formatInTimeZone(new Date(a.starts_at), TZ, "HH:mm zzz")}
                     </div>
                     {a.notes && (
-                      <div className="text-xs text-muted-foreground line-clamp-2">
-                        {a.notes}
-                      </div>
+                      <div className="text-xs text-muted-foreground line-clamp-2">{a.notes}</div>
                     )}
                   </div>
 
                   {/* Status badge + change dropdown */}
                   <div className="flex items-center gap-2">
                     <Badge variant={badgeVariant(a.status)} className="shrink-0 capitalize">
-                      {STATUS_LABEL[normalizeStatus(a.status)] || "Scheduled"}
+                      {STATUS_LABEL[a.status] || "Scheduled"}
                     </Badge>
                     <select
-                      value={normalizeStatus(a.status)}
+                      value={a.status}
                       onChange={(e) => updateStatus(a.id, e.target.value)}
                       className="text-xs border rounded-md px-2 py-1 bg-white"
                       disabled={savingId === a.id}
                       aria-label="Change status"
                     >
-                      {STATUS_ORDER.map((s) => (
-                        <option key={s} value={s}>
-                          {STATUS_LABEL[s]}
-                        </option>
+                      {UI_STATUS.map((s) => (
+                        <option key={s} value={s}>{STATUS_LABEL[s]}</option>
                       ))}
                     </select>
                   </div>
@@ -255,8 +282,16 @@ export default function DayAppointments() {
   );
 }
 
-function badgeVariant(status) {
-  switch (normalizeStatus(status)) {
+function SummaryChip({ label, value }) {
+  return (
+    <div className="text-xs px-2 py-1 rounded-full border bg-slate-50 text-slate-700">
+      <span className="font-medium">{label}:</span> {value ?? 0}
+    </div>
+  );
+}
+
+function badgeVariant(uiStatus) {
+  switch (normalizeUIStatus(uiStatus)) {
     case "confirmed":
     case "checked_in":
       return "default";
