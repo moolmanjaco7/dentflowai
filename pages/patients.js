@@ -96,9 +96,9 @@ export default function PatientsPage(){
                       </div>
                     </div>
                     {/* Link placeholder to future patient details page */}
-                    <Link href="#" className="text-xs underline text-slate-700 hover:text-slate-900">
-                      View record
-                    </Link>
+                    <Link href={`/patients/${p.id}`} className="text-xs underline text-slate-700 hover:text-slate-900">
+  View record
+</Link>
                   </li>
                 ))}
               </ul>

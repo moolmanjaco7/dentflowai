@@ -4,7 +4,7 @@ import * as React from "react";
 import { format } from "date-fns";
 import { toDate } from "date-fns-tz";
 import { createClient } from "@supabase/supabase-js";
-import { Input } from "@/components/ui/input"; // you already have this
+import { Input } from "@/components/ui/input";
 
 const TZ = "Africa/Johannesburg";
 
@@ -24,23 +24,31 @@ const UI_TO_DB = {
   cancelled: "cancelled",
 };
 
-export default function NewAppointmentModal({ defaultDate, onCreated }) {
+/**
+ * Props:
+ * - defaultDate: Date  (required)
+ * - onCreated: () => void
+ * - fixedPatientId?: string   -> when provided, skips patient select
+ * - fixedPatientName?: string -> optional label in the form when fixedPatientId is set
+ */
+export default function NewAppointmentModal({ defaultDate, onCreated, fixedPatientId, fixedPatientName }) {
   const [open, setOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
 
   // form state
   const [title, setTitle] = React.useState("");
-  const [patientId, setPatientId] = React.useState("");
+  const [patientId, setPatientId] = React.useState(fixedPatientId || "");
   const [status, setStatus] = React.useState("scheduled");
   const [notes, setNotes] = React.useState("");
   const [startTime, setStartTime] = React.useState("09:00");
   const [endTime, setEndTime] = React.useState("09:30");
 
-  // patients
+  // patients (only when not fixed)
   const [patients, setPatients] = React.useState([]);
 
   React.useEffect(() => {
+    if (fixedPatientId) return; // skip fetching
     (async () => {
       const { data } = await supabase
         .from("patients")
@@ -49,7 +57,7 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
         .limit(200);
       if (Array.isArray(data)) setPatients(data);
     })();
-  }, []);
+  }, [fixedPatientId]);
 
   // close on ESC
   React.useEffect(() => {
@@ -69,7 +77,8 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
     setError("");
 
     try {
-      if (!patientId) throw new Error("Please choose a patient");
+      const effectivePatientId = fixedPatientId || patientId;
+      if (!effectivePatientId) throw new Error("Please choose a patient");
       if (!startTime || !endTime) throw new Error("Please set start and end time");
 
       const startsAtUtc = toDate(localStr(defaultDate, startTime), { timeZone: TZ });
@@ -82,7 +91,7 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
         .from("appointments")
         .insert({
           title: title || "Appointment",
-          patient_id: patientId,
+          patient_id: effectivePatientId,
           status: dbStatus,
           notes: notes || null,
           starts_at: startsAtUtc.toISOString(),
@@ -93,23 +102,24 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
 
       if (insErr) throw insErr;
 
-      // reset & close
+      // reset (but keep fixedPatientId untouched)
       setTitle("");
-      setPatientId("");
+      setPatientId(fixedPatientId || "");
       setStatus("scheduled");
       setNotes("");
       setStartTime("09:00");
       setEndTime("09:30");
       setOpen(false);
 
-// ✅ toast + refresh
       window.dispatchEvent(new CustomEvent("toast", {
         detail: { title: "Appointment created", type: "success" }
       }));
-
       onCreated?.();
     } catch (e) {
       setError(e?.message || "Failed to create appointment");
+      window.dispatchEvent(new CustomEvent("toast", {
+        detail: { title: "Failed to create appointment", type: "error" }
+      }));
     } finally {
       setLoading(false);
     }
@@ -147,19 +157,28 @@ export default function NewAppointmentModal({ defaultDate, onCreated }) {
             </div>
 
             <div className="grid gap-3">
-              <div className="grid gap-1">
-                <label className="text-sm font-medium">Patient</label>
-                <select
-                  value={patientId}
-                  onChange={(e) => setPatientId(e.target.value)}
-                  className="border rounded-md px-2 py-2 text-sm bg-white"
-                >
-                  <option value="">Select a patient…</option>
-                  {patients.map((p) => (
-                    <option key={p.id} value={p.id}>{p.full_name}</option>
-                  ))}
-                </select>
-              </div>
+              {!fixedPatientId ? (
+                <div className="grid gap-1">
+                  <label className="text-sm font-medium">Patient</label>
+                  <select
+                    value={patientId}
+                    onChange={(e) => setPatientId(e.target.value)}
+                    className="border rounded-md px-2 py-2 text-sm bg-white"
+                  >
+                    <option value="">Select a patient…</option>
+                    {patients.map((p) => (
+                      <option key={p.id} value={p.id}>{p.full_name}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="grid gap-1">
+                  <label className="text-sm font-medium">Patient</label>
+                  <div className="px-2 py-2 text-sm rounded-md border bg-slate-50">
+                    {fixedPatientName || "Selected patient"}
+                  </div>
+                </div>
+              )}
 
               <div className="grid gap-1">
                 <label className="text-sm font-medium">Title</label>
