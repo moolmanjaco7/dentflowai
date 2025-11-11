@@ -12,12 +12,13 @@ import { Input } from "@/components/ui/input";
 
 const TZ = "Africa/Johannesburg";
 
-// Supabase client (browser) — avoids relying on a local helper file
+// Supabase client (browser)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
+// Build UTC range for a local SA day
 function dayRangeUTC(date) {
   const startLocalStr = formatInTimeZone(date, TZ, "yyyy-MM-dd 00:00:00");
   const startUtc = toDate(startLocalStr, { timeZone: TZ });
@@ -25,12 +26,11 @@ function dayRangeUTC(date) {
   return { startUtc, endUtc };
 }
 
-
 export default function DayAppointments() {
   const [date, setDate] = React.useState(new Date());
   const [query, setQuery] = React.useState("");
   const [loading, setLoading] = React.useState(false);
-  const [items, setItems] = React.useState([]);
+  const [items, setItems] = React.useState([]); // each item will have .display_name
   const [error, setError] = React.useState(null);
 
   const fetchForDay = React.useCallback(async (d) => {
@@ -38,17 +38,44 @@ export default function DayAppointments() {
     setError(null);
     try {
       const { startUtc, endUtc } = dayRangeUTC(d);
-      const { data, error } = await supabase
+
+      // 1) Get appointments for the day (NO patient_name here)
+      const { data: appts, error: apptErr } = await supabase
         .from("appointments")
-        .select("id, patient_name, starts_at, ends_at, status, notes")
+        .select("id, title, starts_at, ends_at, status, notes, patient_id")
         .gte("starts_at", startUtc.toISOString())
         .lt("starts_at", endUtc.toISOString())
         .order("starts_at", { ascending: true });
 
-      if (error) throw error;
-      setItems(Array.isArray(data) ? data : []);
+      if (apptErr) throw apptErr;
+
+      const appointments = Array.isArray(appts) ? appts : [];
+
+      // 2) If we have patient_ids, fetch those patients in one shot
+      const ids = [...new Set(appointments.map(a => a.patient_id).filter(Boolean))];
+
+      let patientMap = new Map();
+      if (ids.length > 0) {
+        const { data: patients, error: patErr } = await supabase
+          .from("patients")
+          .select("id, full_name")
+          .in("id", ids);
+        if (patErr) {
+          // Not fatal — we can still render with title fallback
+          console.warn("Patients fetch error:", patErr.message);
+        } else if (Array.isArray(patients)) {
+          patientMap = new Map(patients.map(p => [p.id, p.full_name]));
+        }
+      }
+
+      // 3) Build display_name with graceful fallbacks
+      const withNames = appointments.map(a => ({
+        ...a,
+        display_name: patientMap.get(a.patient_id) || a.title || "(No name)",
+      }));
+
+      setItems(withNames);
     } catch (e) {
-      // Shows RLS/permission errors cleanly if not authenticated
       setError(e?.message || "Failed to load appointments");
     } finally {
       setLoading(false);
@@ -62,7 +89,7 @@ export default function DayAppointments() {
     const q = query.toLowerCase();
     return items.filter(
       (a) =>
-        (a.patient_name || "").toLowerCase().includes(q) ||
+        (a.display_name || "").toLowerCase().includes(q) ||
         (a.notes || "").toLowerCase().includes(q)
     );
   }, [items, query]);
@@ -114,7 +141,7 @@ export default function DayAppointments() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
                     <div className="text-sm font-medium">
-                      {a.patient_name || "(No name)"}
+                      {a.display_name}
                     </div>
                     <div className="text-xs text-muted-foreground">
                       {formatInTimeZone(new Date(a.starts_at), TZ, "HH:mm")} —{" "}
