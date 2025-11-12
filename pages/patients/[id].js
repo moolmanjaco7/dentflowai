@@ -6,14 +6,25 @@ import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Button } from "@/components/ui/button";
 import PatientNotes from "@/components/PatientNotes";
 import PatientHistory from "@/components/PatientHistory";
+import InlineEditField from "@/components/InlineEditField";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
+
+// light validators
+const validateEmail = (v) => {
+  if (!v) return null; // allow empty
+  return /^\S+@\S+\.\S+$/.test(v) ? null : "Invalid email format";
+};
+const validatePhone = (v) => {
+  if (!v) return null;
+  const digits = (v || "").replace(/\D/g, "");
+  return digits.length >= 7 ? null : "Phone number looks too short";
+};
 
 export default function PatientDetailPage() {
   const router = useRouter();
@@ -34,10 +45,19 @@ export default function PatientDetailPage() {
           return;
         }
 
-        // ✅ Only select columns that exist in your schema
+        // Try to fetch optional DOB if it exists, but don't require it
+        let columns = "id, full_name, email, phone";
+        // We'll probe if date_of_birth exists, otherwise ignore
+        const { data: probe, error: probeErr } = await supabase
+          .from("patients")
+          .select("date_of_birth")
+          .limit(1);
+        const hasDob = !probeErr; // if no error, column exists
+        if (hasDob) columns += ", date_of_birth";
+
         const { data, error } = await supabase
           .from("patients")
-          .select("id, full_name, email, phone")
+          .select(columns)
           .eq("id", id)
           .maybeSingle();
 
@@ -50,6 +70,30 @@ export default function PatientDetailPage() {
       }
     })();
   }, [id]);
+
+  async function updateField(field, value) {
+    if (!patient) return;
+    // optimistic UI
+    const prev = patient;
+    setPatient((p) => ({ ...p, [field]: value }));
+
+    // Try update; if column is missing (e.g., date_of_birth), catch and rollback
+    const { error } = await supabase
+      .from("patients")
+      .update({ [field]: value })
+      .eq("id", patient.id)
+      .select("id")
+      .maybeSingle();
+
+    if (error) {
+      setPatient(prev);
+      // helpful message if column missing
+      const msg = /column .* does not exist/i.test(error.message)
+        ? `Column "${field}" does not exist. Add it first (or skip editing this field).`
+        : error.message;
+      throw new Error(msg);
+    }
+  }
 
   if (loading) {
     return (
@@ -89,7 +133,7 @@ export default function PatientDetailPage() {
           </div>
 
           <Card className="p-4">
-            {/* Tabs (simple, no external lib) */}
+            {/* Tabs */}
             <div className="flex gap-2">
               {["details", "notes", "history"].map((t) => (
                 <button
@@ -108,10 +152,38 @@ export default function PatientDetailPage() {
 
             {tab === "details" && (
               <div className="grid gap-2 text-sm">
-                <Row label="Full name" value={patient.full_name || "—"} />
-                <Row label="Email" value={patient.email || "—"} />
-                <Row label="Phone" value={patient.phone || "—"} />
-                <Row label="Patient ID" value={patient.id} />
+                <InlineEditField
+                  label="Full name"
+                  value={patient.full_name}
+                  onSave={(v) => updateField("full_name", v)}
+                />
+                <InlineEditField
+                  label="Email"
+                  type="email"
+                  value={patient.email}
+                  validate={validateEmail}
+                  onSave={(v) => updateField("email", v)}
+                />
+                <InlineEditField
+                  label="Phone"
+                  type="tel"
+                  value={patient.phone}
+                  validate={validatePhone}
+                  onSave={(v) => updateField("phone", v)}
+                />
+                {/* DOB: only show editor if the column is present on this record */}
+                {"date_of_birth" in patient && (
+                  <InlineEditField
+                    label="Date of birth"
+                    type="date"
+                    value={patient.date_of_birth || ""}
+                    onSave={(v) => updateField("date_of_birth", v)}
+                  />
+                )}
+                <div className="flex items-center justify-between border rounded-lg bg-white p-3">
+                  <div className="text-slate-600">Patient ID</div>
+                  <div className="font-medium break-all text-right">{patient.id}</div>
+                </div>
               </div>
             )}
 
@@ -122,14 +194,5 @@ export default function PatientDetailPage() {
         </section>
       </main>
     </>
-  );
-}
-
-function Row({ label, value }) {
-  return (
-    <div className="flex items-center justify-between border rounded-lg bg-white p-3">
-      <div className="text-slate-600">{label}</div>
-      <div className="font-medium break-all text-right">{String(value ?? "—")}</div>
-    </div>
   );
 }
