@@ -24,17 +24,45 @@ function addDays(dateStr, days) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+const PRESETS = [
+  { key: "2w", label: "+2 weeks", days: 14 },
+  { key: "6w", label: "+6 weeks", days: 42 },
+  { key: "3m", label: "+3 months", days: 90 },
+];
+
+// clinic-wide overlap check: any appt where (start < proposedEnd) AND (end > proposedStart)
+async function hasConflict(startISO, endISO) {
+  const { count, error } = await supabase
+    .from("appointments")
+    .select("id", { count: "exact", head: true })
+    .lt("starts_at", endISO)
+    .gt("ends_at", startISO);
+  if (error) throw error;
+  return (count || 0) > 0;
+}
+
 export default function PatientQuickAdd({ patientId, onCreated }) {
   const [date, setDate] = React.useState("");
   const [start, setStart] = React.useState("");
   const [end, setEnd] = React.useState("");
   const [title, setTitle] = React.useState("");
+  const [preset, setPreset] = React.useState("6w");
   const [saving, setSaving] = React.useState(false);
   const [err, setErr] = React.useState("");
+  const [conflictMsg, setConflictMsg] = React.useState("");
 
   async function insertAppt({ dateStr, startStr, endStr, apptTitle }) {
     const starts_at = toUtcIso(dateStr, startStr);
     const ends_at = toUtcIso(dateStr, endStr);
+
+    // conflict check
+    if (await hasConflict(starts_at, ends_at)) {
+      setConflictMsg("⛔ That time overlaps with an existing appointment.");
+      throw new Error("Overlapping appointment");
+    } else {
+      setConflictMsg("");
+    }
+
     const payload = {
       patient_id: patientId,
       title: apptTitle || "Appointment",
@@ -65,30 +93,28 @@ export default function PatientQuickAdd({ patientId, onCreated }) {
       });
       if (onCreated) onCreated(newId);
 
-      // toast
+      // toast + refresh history
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Appointment created", type: "success" } }));
         window.dispatchEvent(new CustomEvent("patient-history-refresh", { detail: { patientId } }));
       }
 
-      setTitle("");
-      setStart("");
-      setEnd("");
-      setDate("");
+      setTitle(""); setStart(""); setEnd(""); setDate("");
     } catch (e) {
-      setErr(e.message || "Failed to create appointment");
+      if (e.message !== "Overlapping appointment") setErr(e.message || "Failed to create appointment");
     } finally {
       setSaving(false);
     }
   }
 
-  async function createFollowUp6w() {
+  async function createFollowUpPreset() {
     setErr("");
     if (!patientId) return setErr("Missing patient");
     if (!date || !start || !end) return setErr("Pick date, start & end first");
+    const p = PRESETS.find((x) => x.key === preset) || PRESETS[1]; // default 6w
     setSaving(true);
     try {
-      const followDate = addDays(date, 42); // +6 weeks
+      const followDate = addDays(date, p.days);
       const newId = await insertAppt({
         dateStr: followDate,
         startStr: start,
@@ -98,11 +124,11 @@ export default function PatientQuickAdd({ patientId, onCreated }) {
       if (onCreated) onCreated(newId);
 
       if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Follow-up created (+6 weeks)", type: "success" } }));
+        window.dispatchEvent(new CustomEvent("toast", { detail: { title: `Follow-up created (${p.label})`, type: "success" } }));
         window.dispatchEvent(new CustomEvent("patient-history-refresh", { detail: { patientId } }));
       }
     } catch (e) {
-      setErr(e.message || "Failed to create follow-up");
+      if (e.message !== "Overlapping appointment") setErr(e.message || "Failed to create follow-up");
     } finally {
       setSaving(false);
     }
@@ -117,19 +143,35 @@ export default function PatientQuickAdd({ patientId, onCreated }) {
         <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
         <Input placeholder="Title (optional)" value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
+
+      {!!conflictMsg && <div className="text-sm text-red-600">{conflictMsg}</div>}
+      {!!err && <div className="text-sm text-red-600">{err}</div>}
+
       <div className="flex flex-wrap items-center gap-3">
         <Button onClick={submit} disabled={saving || !date || !start || !end}>
           {saving ? "Saving…" : "Create"}
         </Button>
-        <Button
-          variant="outline"
-          onClick={createFollowUp6w}
-          disabled={saving || !date || !start || !end}
-          title="Uses the same start/end time, 6 weeks later"
-        >
-          + Follow-up in 6 weeks
-        </Button>
-        {err && <span className="text-sm text-red-600">{err}</span>}
+
+        <div className="flex items-center gap-2">
+          <select
+            value={preset}
+            onChange={(e) => setPreset(e.target.value)}
+            className="border rounded-md px-2 py-1 text-sm"
+            title="Choose follow-up interval"
+          >
+            {PRESETS.map((p) => (
+              <option key={p.key} value={p.key}>{p.label}</option>
+            ))}
+          </select>
+          <Button
+            variant="outline"
+            onClick={createFollowUpPreset}
+            disabled={saving || !date || !start || !end}
+            title="Uses the same start/end time at the chosen interval"
+          >
+            + Follow-up (preset)
+          </Button>
+        </div>
       </div>
     </div>
   );
