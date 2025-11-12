@@ -2,376 +2,152 @@
 "use client";
 import * as React from "react";
 import { createClient } from "@supabase/supabase-js";
-import { format } from "date-fns";
-import { toDate } from "date-fns-tz";
-import { Card } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import Toasts from "@/components/Toast";
-import {
-  UI_STATUS,
-  STATUS_LABEL,
-  normalizeUiStatus,
-  toDbStatus,
-  toUiStatus,
-} from "@/lib/status";
-
-const TZ = "Africa/Johannesburg";
+import { Separator } from "@/components/ui/separator";
+import NewAppointmentModal from "@/components/NewAppointmentModal";
+import EditAppointmentModal from "@/components/EditAppointmentModal";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// Build a local time string like "yyyy-MM-dd HH:mm:ss" in TZ, then convert to Date (UTC)
-function localDateTime(dateOnly, timeHHmm) {
-  const d = format(dateOnly, "yyyy-MM-dd");
-  return `${d} ${timeHHmm}:00`;
-}
-function startEndOfDayInUtc(dateOnly) {
-  const startUtc = toDate(localDateTime(dateOnly, "00:00"), { timeZone: TZ });
-  const endUtc = toDate(localDateTime(dateOnly, "23:59"), { timeZone: TZ });
-  return { startUtc, endUtc };
+// Allowed DB statuses
+const ALLOWED = ["booked","confirmed","checked_in","completed","no_show","cancelled"];
+const STATUS_LABEL = { booked:"Scheduled", confirmed:"Confirmed", checked_in:"Checked-in", completed:"Completed", no_show:"No Show", cancelled:"Cancelled" };
+
+const TZ = "Africa/Johannesburg";
+const tzOffset = "+02:00";
+
+function isoDayBounds(dateStr) {
+  const s = new Date(`${dateStr}T00:00:00${tzOffset}`).toISOString();
+  const e = new Date(`${dateStr}T23:59:59${tzOffset}`).toISOString();
+  return { s, e };
 }
 
 export default function DayAppointments() {
-  const [selectedDate, setSelectedDate] = React.useState(new Date());
-  const [appointments, setAppointments] = React.useState([]);
-  const [patients, setPatients] = React.useState(new Map());
+  const [date, setDate] = React.useState(() => {
+    const now = new Date(new Date().toLocaleString("en-ZA", { timeZone: TZ }));
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth()+1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  });
+
+  const [list, setList] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState("");
-  const [savingId, setSavingId] = React.useState(null);
+  const [newOpen, setNewOpen] = React.useState(false);
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [editAppt, setEditAppt] = React.useState(null);
+  const [busyRanges, setBusyRanges] = React.useState([]);
 
-  // UX polish
-  const [fading, setFading] = React.useState(false);
+  const load = React.useCallback(async () => {
+    setLoading(true); setErr("");
+    const { s, e } = isoDayBounds(date);
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("id,title,starts_at,ends_at,status,patient_id")
+      .gte("starts_at", s)
+      .lte("starts_at", e)
+      .order("starts_at", { ascending: true });
+    if (error) setErr(error.message);
+    setList(data || []);
+    setBusyRanges((data || []).map(r => ({ startISO: r.starts_at, endISO: r.ends_at, title: r.title })));
+    setLoading(false);
+  }, [date]);
 
-  // NEW: search & status filter
-  const [query, setQuery] = React.useState("");
-  const [statusFilter, setStatusFilter] = React.useState("all"); // "all" or one of UI_STATUS
+  React.useEffect(() => { load(); }, [load]);
 
-  const patientName = React.useCallback(
-    (pid) => patients.get(pid) || "—",
-    [patients]
-  );
+  function openEdit(a) { setEditAppt(a); setEditOpen(true); }
 
-  async function load() {
-    setErr("");
-    setFading(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        if (typeof window !== "undefined") window.location.href = "/auth/login";
-        return;
-      }
-
-      // Patients map
-      const { data: pats } = await supabase
-        .from("patients")
-        .select("id, full_name")
-        .order("full_name", { ascending: true })
-        .limit(1000);
-
-      const map = new Map();
-      (Array.isArray(pats) ? pats : []).forEach((p) => map.set(p.id, p.full_name));
-      setPatients(map);
-
-      const { startUtc, endUtc } = startEndOfDayInUtc(selectedDate);
-
-      const { data: appts, error: aErr } = await supabase
-        .from("appointments")
-        .select("id, title, starts_at, ends_at, status, patient_id, notes")
-        .gte("starts_at", startUtc.toISOString())
-        .lte("starts_at", endUtc.toISOString())
-        .order("starts_at", { ascending: true });
-
-      if (aErr) throw aErr;
-
-      const hydrated = (Array.isArray(appts) ? appts : []).map((a) => ({
-        ...a,
-        status: toUiStatus(a.status),
-      }));
-
-      setAppointments(hydrated);
-    } catch (e) {
-      setErr(e?.message || "Failed to load appointments");
-    } finally {
-      setLoading(false);
-      setTimeout(() => setFading(false), 150);
+  async function setStatus(id, next) {
+    if (!ALLOWED.includes(next)) return;
+    const prev = list;
+    setList((rows) => rows.map(r => r.id === id ? { ...r, status: next } : r));
+    const { error } = await supabase.from("appointments").update({ status: next }).eq("id", id);
+    if (error) {
+      setList(prev);
+      alert(error.message);
     }
-  }
-
-  // Initial + on date change
-  React.useEffect(() => {
-    setLoading(true);
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDate]);
-
-  // Listen for QuickActions events
-  React.useEffect(() => {
-    const onRefresh = () => load();
-    const onToday = () => setSelectedDate(new Date());
-    window.addEventListener("refresh-day-appts", onRefresh);
-    window.addEventListener("go-today", onToday);
-    return () => {
-      window.removeEventListener("refresh-day-appts", onRefresh);
-      window.removeEventListener("go-today", onToday);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function changeStatus(aptId, newUiStatusRaw) {
-    const newUi = normalizeUiStatus(newUiStatusRaw);
-    const newDb = toDbStatus(newUi);
-
-    // optimistic update
-    const prev = appointments;
-    setSavingId(aptId);
-    setAppointments((list) =>
-      list.map((a) => (a.id === aptId ? { ...a, status: newUi } : a))
-    );
-
-    try {
-      const { error } = await supabase
-        .from("appointments")
-        .update({ status: newDb })
-        .eq("id", aptId)
-        .select("id")
-        .maybeSingle();
-
-      if (error) throw error;
-
-      window.dispatchEvent(
-        new CustomEvent("toast", {
-          detail: { title: "Status updated", type: "success" },
-        })
-      );
-    } catch (e) {
-      setAppointments(prev);
-      window.dispatchEvent(
-        new CustomEvent("toast", {
-          detail: { title: "Failed to update status", type: "error" },
-        })
-      );
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  // Status counters (total for the day, not filtered)
-  const counts = React.useMemo(() => {
-    const c = Object.fromEntries(UI_STATUS.map((s) => [s, 0]));
-    for (const a of appointments) {
-      const k = normalizeUiStatus(a.status);
-      if (c[k] !== undefined) c[k]++;
-    }
-    return c;
-  }, [appointments]);
-
-  // NEW: apply query + status filter to visible list
-  const filtered = React.useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return appointments.filter((a) => {
-      const okStatus =
-        statusFilter === "all" ? true : normalizeUiStatus(a.status) === statusFilter;
-      if (!okStatus) return false;
-
-      if (!needle) return true;
-
-      const pn = (patientName(a.patient_id) || "").toLowerCase();
-      const tt = (a.title || "").toLowerCase();
-      const nt = (a.notes || "").toLowerCase();
-      return pn.includes(needle) || tt.includes(needle) || nt.includes(needle);
-    });
-  }, [appointments, query, statusFilter, patientName]);
-
-  // NEW: export CSV (filtered list)
-  function exportCsv() {
-    const headers = [
-      "Title",
-      "Patient",
-      "Status",
-      "Start",
-      "End",
-      "Notes",
-    ];
-    const rows = filtered.map((a) => [
-      (a.title || "Appointment").replaceAll('"', '""'),
-      (patientName(a.patient_id) || "").replaceAll('"', '""'),
-      STATUS_LABEL[normalizeUiStatus(a.status)] || "Scheduled",
-      new Date(a.starts_at).toLocaleString("en-ZA"),
-      new Date(a.ends_at || a.starts_at).toLocaleString("en-ZA"),
-      (a.notes || "").replaceAll('"', '""'),
-    ]);
-
-    const csv =
-      headers.join(",") +
-      "\n" +
-      rows.map((r) => r.map((x) => `"${x}"`).join(",")).join("\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const d = format(selectedDate, "yyyy-MM-dd");
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `appointments_${d}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   return (
-    <Card className="p-4">
-      <Toasts />
-      {/* Header row */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <h2 className="text-lg font-semibold">Appointments by Day</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="text-sm text-slate-600">Date</label>
-          <Input
-            type="date"
-            value={format(selectedDate, "yyyy-MM-dd")}
-            onChange={(e) => {
-              const [y, m, d] = e.target.value.split("-").map(Number);
-              setSelectedDate(new Date(y, m - 1, d));
-            }}
-            className="w-[160px]"
-          />
-          <button
-            onClick={load}
-            className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50"
-          >
-            Refresh
-          </button>
-          {/* NEW: Export CSV */}
-          <button
-            onClick={exportCsv}
-            className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50"
-            title="Export filtered list as CSV"
-          >
-            Export CSV
-          </button>
-        </div>
-      </div>
-
-      {/* NEW: Filters row */}
-      <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        {/* Status chips (day totals) */}
-        <div className="flex flex-wrap gap-2 text-xs">
-          {UI_STATUS.map((s) => (
-            <div
-              key={s}
-              className="px-2 py-1 rounded-full border bg-slate-50 text-slate-700"
-              title={STATUS_LABEL[s]}
-            >
-              <span className="font-medium">{STATUS_LABEL[s]}:</span> {counts[s] ?? 0}
-            </div>
-          ))}
-        </div>
-
-        {/* Search + status filter */}
+    <div className="rounded-2xl border bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Input
-            placeholder="Search patient, title, notes…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-[240px]"
-          />
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-sm border rounded-md px-2 py-2 bg-white"
-            aria-label="Filter by status"
-          >
-            <option value="all">All statuses</option>
-            {UI_STATUS.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s]}
-              </option>
-            ))}
-          </select>
+          <span className="text-sm font-semibold">Appointments</span>
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="h-8 w-auto" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-600">
+            <span className="inline-block h-2 w-2 rounded-full bg-slate-400" /> Booked
+            <span className="inline-block h-2 w-2 rounded-full bg-sky-500" /> Confirmed
+            <span className="inline-block h-2 w-2 rounded-full bg-green-500" /> Completed
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> No show
+          </div>
+          <Button size="sm" onClick={() => setNewOpen(true)}>+ New</Button>
         </div>
       </div>
 
       <Separator className="my-3" />
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-slate-600">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-transparent" />
-          Loading…
-        </div>
+        <p className="text-sm text-slate-600">Loading…</p>
       ) : err ? (
-        <div className="text-sm text-red-600">{err}</div>
-      ) : filtered.length === 0 ? (
-        <div className="text-sm text-slate-600">No appointments match your filters.</div>
+        <p className="text-sm text-red-600">{err}</p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-slate-600">No appointments.</p>
       ) : (
-        <ul
-          className={`space-y-2 transition-opacity duration-200 ${
-            fading ? "opacity-70" : "opacity-100"
-          }`}
-        >
-          {filtered.map((a) => (
-            <li key={a.id} className="rounded-lg border p-3 bg-white hover:shadow-sm transition">
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="text-sm font-medium">
-                    {a.title || "Appointment"} ·{" "}
-                    <span className="text-slate-600">{patientName(a.patient_id)}</span>
-                  </div>
+        <div className="grid md:grid-cols-2 gap-3">
+          {list.map((a) => (
+            <div key={a.id} className="border rounded-xl p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{a.title || "Appointment"}</div>
                   <div className="text-xs text-slate-500">
-                    {new Date(a.starts_at).toLocaleTimeString("en-ZA", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}{" "}
-                    –{" "}
-                    {new Date(a.ends_at || a.starts_at).toLocaleTimeString("en-ZA", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {new Date(a.starts_at).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit"})}
+                    {"–"}
+                    {new Date(a.ends_at).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit"})}
+                    {a.patient_id && (
+                      <> · <a className="underline" href={`/patients/${a.patient_id}`}>Patient</a></>
+                    )}
                   </div>
-                  {a.notes && (
-                    <div className="text-xs text-slate-600 line-clamp-2">{a.notes}</div>
-                  )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant={badgeVariant(a.status)} className="shrink-0 capitalize">
-                    {STATUS_LABEL[a.status] || "Scheduled"}
-                  </Badge>
+                <div className="flex items-center gap-2 shrink-0">
                   <select
-                    value={normalizeUiStatus(a.status)}
-                    onChange={(e) => changeStatus(a.id, e.target.value)}
-                    className="text-xs border rounded-md px-2 py-1 bg-white"
-                    disabled={savingId === a.id}
-                    aria-label="Change status"
+                    className="border rounded-md px-2 py-1 text-xs"
+                    value={a.status}
+                    onChange={(e) => setStatus(a.id, e.target.value)}
                   >
-                    {UI_STATUS.map((s) => (
-                      <option key={s} value={s}>
-                        {STATUS_LABEL[s]}
-                      </option>
-                    ))}
+                    {ALLOWED.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
                   </select>
+                  <Button size="sm" variant="outline" onClick={() => openEdit(a)}>Edit</Button>
                 </div>
               </div>
-            </li>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
-    </Card>
-  );
-}
 
-function badgeVariant(uiStatus) {
-  switch (normalizeUiStatus(uiStatus)) {
-    case "confirmed":
-    case "checked_in":
-      return "default";
-    case "completed":
-      return "secondary";
-    case "cancelled":
-    case "no_show":
-      return "destructive";
-    case "scheduled":
-    default:
-      return "outline";
-  }
+      {/* New modal */}
+      <NewAppointmentModal
+        open={newOpen}
+        onOpenChange={(v) => { setNewOpen(v); if (!v) load(); }}
+        defaultDate={date}
+        onCreated={() => load()}
+      />
+
+      {/* Edit modal */}
+      {editAppt && (
+        <EditAppointmentModal
+          open={editOpen}
+          onOpenChange={(v) => { setEditOpen(v); if (!v) { setEditAppt(null); load(); } }}
+          appt={editAppt}
+          onUpdated={() => load()}
+        />
+      )}
+    </div>
+  );
 }

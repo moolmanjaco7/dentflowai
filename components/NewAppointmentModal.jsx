@@ -2,355 +2,208 @@
 "use client";
 import * as React from "react";
 import { createClient } from "@supabase/supabase-js";
-import { format } from "date-fns";
-import { toDate } from "date-fns-tz";
-
-// shadcn/ui bits (adjust paths if your setup differs)
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-
-import { normalizeUiStatus, toDbStatus, UI_STATUS, STATUS_LABEL } from "@/lib/status";
-
-const TZ = "Africa/Johannesburg";
-const OPEN_H = 8;   // 08:00
-const CLOSE_H = 18; // 18:00
-const STEP_MIN = 30;
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-/* ========================= Helpers ========================= */
+// SA is UTC+2
+const tzOffset = "+02:00";
+const UI_STATUS = ["booked","confirmed","checked_in","completed","no_show","cancelled"];
 
-// Build YYYY-MM-DD for a date in clinic TZ
-function fmtDateLocalYYYYMMDD(d, tz = TZ) {
-  const z = new Date(d.toLocaleString("en-ZA", { timeZone: tz }));
-  const y = z.getFullYear();
-  const m = String(z.getMonth() + 1).padStart(2, "0");
-  const dd = String(z.getDate()).padStart(2, "0");
-  return `${y}-${m}-${dd}`;
+function toUtcIso(dateStr, timeStr) {
+  const iso = `${dateStr}T${timeStr || "00:00"}:00${tzOffset}`;
+  return new Date(iso).toISOString();
 }
 
-// Build "yyyy-MM-dd HH:mm" local string for toDate()
-function localStr(dateOnly, hhmm, tz = TZ) {
-  const yyyyMMdd = fmtDateLocalYYYYMMDD(dateOnly, tz);
-  return `${yyyyMMdd} ${hhmm}:00`;
+async function hasConflict(startISO, endISO) {
+  const { count, error } = await supabase
+    .from("appointments")
+    .select("id", { head: true, count: "exact" })
+    .lt("starts_at", endISO)
+    .gt("ends_at", startISO);
+  if (error) throw error;
+  return (count || 0) > 0;
 }
 
-// Generator for time slots (in minutes)
-function* timeSlots(range = { start: OPEN_H * 60, end: CLOSE_H * 60, step: STEP_MIN }) {
-  for (let m = range.start; m <= range.end; m += range.step) {
-    const hh = String(Math.floor(m / 60)).padStart(2, "0");
-    const mm = String(m % 60).padStart(2, "0");
-    yield `${hh}:${mm}`;
-  }
-}
-
-function parseHM(str) {
-  const [h, m] = str.split(":").map(Number);
-  return h * 60 + m;
-}
-
-function overlaps(aStart, aEnd, bStart, bEnd) {
-  // half-open intervals [start, end)
-  return aStart < bEnd && bStart < aEnd;
-}
-
-/* ========================================================== */
-
-export default function NewAppointmentModal({
-  defaultDate = new Date(),
-  fixedPatientId,
-  fixedPatientName,
-  onCreated,
-}) {
-  const [open, setOpen] = React.useState(false);
-
-  // Form state
-  const [title, setTitle] = React.useState("");
+export default function NewAppointmentModal({ open, onOpenChange, defaultDate, onCreated, patientId: fixedPatientId }) {
   const [patientId, setPatientId] = React.useState(fixedPatientId || "");
-  const [status, setStatus] = React.useState("scheduled");
-  const [notes, setNotes] = React.useState("");
-  const [startTime, setStartTime] = React.useState("09:00");
-  const [endTime, setEndTime] = React.useState("09:30");
-  const [patients, setPatients] = React.useState([]);
-  const [loading, setLoading] = React.useState(false);
-  const [error, setError] = React.useState("");
+  const [title, setTitle] = React.useState("");
+  const [date, setDate] = React.useState(defaultDate || "");
+  const [start, setStart] = React.useState("");
+  const [end, setEnd] = React.useState("");
+  const [status, setStatus] = React.useState("booked");
+  const [busyRanges, setBusyRanges] = React.useState([]); // [{startISO,endISO}]
+  const [err, setErr] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const [checking, setChecking] = React.useState(false);
+  const [conflict, setConflict] = React.useState(false);
 
-  // Taken blocks for selected day (in LOCAL MINUTES, e.g., [[540, 570], ...])
-  const [taken, setTaken] = React.useState([]);
-
-  // Load patients (simple list)
   React.useEffect(() => {
+    if (!open) return;
+    if (defaultDate) setDate(defaultDate);
+  }, [open, defaultDate]);
+
+  // load taken slots for selected day -> lightweight availability indicator
+  React.useEffect(() => {
+    if (!open || !date) return;
     (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      const { data } = await supabase
-        .from("patients")
-        .select("id, full_name")
-        .order("full_name", { ascending: true });
-      setPatients(Array.isArray(data) ? data : []);
+      setBusyRanges([]);
+      const dayStart = new Date(`${date}T00:00:00${tzOffset}`).toISOString();
+      const dayEnd   = new Date(`${date}T23:59:59${tzOffset}`).toISOString();
+      const { data, error } = await supabase
+        .from("appointments")
+        .select("starts_at,ends_at,title")
+        .gte("starts_at", dayStart)
+        .lte("starts_at", dayEnd)
+        .order("starts_at", { ascending: true });
+      if (!error && data) {
+        setBusyRanges(
+          data.map(r => ({ startISO: r.starts_at, endISO: r.ends_at, title: r.title }))
+        );
+      }
     })();
-  }, []);
+  }, [open, date]);
 
-  // Load taken slots for the chosen day (TZ-correct)
-React.useEffect(() => {
-  (async () => {
-    // Build local day start/end in clinic TZ, then convert to UTC ISO
-    const startLocalStr = `${fmtDateLocalYYYYMMDD(defaultDate, TZ)} 00:00:00`;
-    const endLocalStr   = `${fmtDateLocalYYYYMMDD(defaultDate, TZ)} 23:59:59`;
-    const startUtc = toDate(startLocalStr, { timeZone: TZ });
-    const endUtc   = toDate(endLocalStr,   { timeZone: TZ });
+  // live conflict check when picking times
+  React.useEffect(() => {
+    if (!date || !start || !end) { setConflict(false); return; }
+    (async () => {
+      try {
+        setChecking(true);
+        const s = toUtcIso(date, start);
+        const e = toUtcIso(date, end);
+        setConflict(await hasConflict(s, e));
+      } finally {
+        setChecking(false);
+      }
+    })();
+  }, [date, start, end]);
 
-    const { data, error } = await supabase
-      .from("appointments")
-      .select("starts_at, ends_at")
-      .gte("starts_at", startUtc.toISOString())
-      .lte("starts_at", endUtc.toISOString());
+  async function createAppt() {
+    setErr("");
+    if (!patientId) return setErr("Select/enter patient ID");
+    if (!date || !start || !end) return setErr("Pick date, start & end");
+    if (!UI_STATUS.includes(status)) return setErr("Invalid status");
 
-    if (error) {
-      setTaken([]);
-      return;
-    }
-
-    // Convert UTC from DB into LOCAL minutes since midnight in clinic TZ
-    const blocks = (Array.isArray(data) ? data : []).map((a) => {
-      const sLocal = new Date(new Date(a.starts_at).toLocaleString("en-ZA", { timeZone: TZ }));
-      const eLocal = new Date(new Date((a.ends_at || a.starts_at)).toLocaleString("en-ZA", { timeZone: TZ }));
-      return [sLocal.getHours() * 60 + sLocal.getMinutes(), eLocal.getHours() * 60 + eLocal.getMinutes()];
-    });
-
-    setTaken(blocks);
-  })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [defaultDate]);
-
-
-  // Quick server check (belt & braces). Uses tstzrange ‘overlaps’ if you added time_range column.
-  async function hasOverlap(startsAtIso, endsAtIso) {
-    const { data, error } = await supabase
-      .from("appointments")
-      .select("id")
-      .overlaps("time_range", [startsAtIso, endsAtIso]); // server overlap
-    if (error) return false;
-    return Array.isArray(data) && data.length > 0;
-  }
-
-  async function handleCreate() {
-    setLoading(true);
-    setError("");
+    const starts_at = toUtcIso(date, start);
+    const ends_at = toUtcIso(date, end);
 
     try {
-      const effectivePatientId = fixedPatientId || patientId;
-      if (!effectivePatientId) throw new Error("Please choose a patient");
-      if (!startTime || !endTime) throw new Error("Please set start and end time");
-
-      // Convert local strings to UTC Date using date-fns-tz
-      const startsAtUtc = toDate(localStr(defaultDate, startTime), { timeZone: TZ });
-      const endsAtUtc = toDate(localStr(defaultDate, endTime), { timeZone: TZ });
-      if (endsAtUtc <= startsAtUtc) throw new Error("End time must be after start time");
-
-      // Working hours check in local TZ
-      const localStart = new Date(startsAtUtc.toLocaleString("en-ZA", { timeZone: TZ }));
-      const localEnd = new Date(endsAtUtc.toLocaleString("en-ZA", { timeZone: TZ }));
-      const lsH = localStart.getHours();
-      const leH = localEnd.getHours();
-      if (lsH < OPEN_H || leH > CLOSE_H || (leH === CLOSE_H && localEnd.getMinutes() > 0)) {
-        throw new Error(`Outside working hours (${String(OPEN_H).padStart(2, "0")}:00–${CLOSE_H}:00)`);
+      setSaving(true);
+      if (await hasConflict(starts_at, ends_at)) {
+        setConflict(true);
+        throw new Error("This time overlaps with another appointment.");
       }
 
-      // Client-side overlap check using taken[]
-      const sHM = localStart.getHours() * 60 + localStart.getMinutes();
-      const eHM = localEnd.getHours() * 60 + localEnd.getMinutes();
-      const clientOverlap = taken.some(([bS, bE]) => overlaps(sHM, eHM, bS, bE));
-      if (clientOverlap) throw new Error("This time overlaps another appointment");
-
-      // Server belt & braces (if time_range exists)
-      const startISO = startsAtUtc.toISOString();
-      const endISO = endsAtUtc.toISOString();
-      if (await hasOverlap(startISO, endISO)) {
-        throw new Error("This time overlaps another appointment");
-      }
-
-      const dbStatus = toDbStatus(status);
-
-      const { error: insErr } = await supabase
+      const { data, error } = await supabase
         .from("appointments")
         .insert({
+          patient_id: patientId,
           title: title || "Appointment",
-          patient_id: effectivePatientId,
-          status: dbStatus,
-          notes: notes || null,
-          starts_at: startISO,
-          ends_at: endISO,
+          starts_at,
+          ends_at,
+          status,
         })
         .select("id")
         .maybeSingle();
 
-      if (insErr) {
-        // If you created the DB exclusion constraint, Postgres will raise code 23P01 on overlaps
-        if (insErr.code === "23P01") {
-          throw new Error("This time overlaps another appointment");
-        }
-        throw insErr;
+      if (error) throw error;
+
+      if (onCreated) onCreated(data?.id || null);
+      onOpenChange(false);
+
+      // toast
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Appointment created", type: "success" } }));
       }
 
-      // Reset and close
-      setTitle("");
-      setPatientId(fixedPatientId || "");
-      setStatus("scheduled");
-      setNotes("");
-      setStartTime("09:00");
-      setEndTime("09:30");
-      setOpen(false);
-
-      window.dispatchEvent(
-        new CustomEvent("toast", { detail: { title: "Appointment created", type: "success" } })
-      );
-      onCreated?.();
+      // reset
+      if (!fixedPatientId) setPatientId("");
+      setTitle(""); setStart(""); setEnd("");
     } catch (e) {
-      setError(e?.message || "Failed to create appointment");
-      window.dispatchEvent(
-        new CustomEvent("toast", { detail: { title: e?.message || "Failed to create appointment", type: "error" } })
-      );
+      setErr(e.message || "Failed to create appointment");
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
-  // Disable logic for <option> items
-  const disabledForStart = React.useCallback(
-    (startHHMM) => {
-      const sHM = parseHM(startHHMM);
-      const eHM = sHM + STEP_MIN; // preview 30m slot
-      // outside working hours?
-      if (sHM < OPEN_H * 60 || eHM > CLOSE_H * 60) return true;
-      // overlaps any taken?
-      return taken.some(([bS, bE]) => overlaps(sHM, eHM, bS, bE));
-    },
-    [taken]
-  );
-
-  const disabledForEnd = React.useCallback(
-    (endHHMM) => {
-      const sHM = parseHM(startTime || "00:00");
-      const eHM = parseHM(endHHMM);
-      // must be strictly after start
-      if (eHM <= sHM) return true;
-      // outside working hours?
-      if (sHM < OPEN_H * 60 || eHM > CLOSE_H * 60) return true;
-      // overlaps any taken?
-      return taken.some(([bS, bE]) => overlaps(sHM, eHM, bS, bE));
-    },
-    [taken, startTime]
-  );
+  // small helper to show red/green hint
+  const conflictHint = !date || !start || !end ? "" : checking ? "Checking…" : conflict ? "⛔ Overlaps" : "✅ Available";
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline">New appointment (no overlaps)</Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-[520px]">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>New appointment</DialogTitle>
         </DialogHeader>
 
         <div className="grid gap-3">
-          <div className="grid gap-1.5">
-            <Label htmlFor="title">Title</Label>
-            <Input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Check-up / Cleaning…" />
+          {!fixedPatientId && (
+            <div className="grid gap-1">
+              <Label>Patient ID</Label>
+              <Input value={patientId} onChange={(e) => setPatientId(e.target.value)} placeholder="UUID from patients table" />
+            </div>
+          )}
+
+          <div className="grid gap-1">
+            <Label>Title</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional" />
           </div>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="patient">Patient</Label>
-            {fixedPatientId ? (
-              <Input id="patient" value={fixedPatientName || "(Fixed)"} disabled />
-            ) : (
-              <select
-                id="patient"
-                value={patientId}
-                onChange={(e) => setPatientId(e.target.value)}
-                className="border rounded-md px-2 py-2 text-sm bg-white"
-              >
-                <option value="">Select a patient…</option>
-                {patients.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.full_name}
-                  </option>
-                ))}
-              </select>
-            )}
+          <div className="grid sm:grid-cols-3 gap-2">
+            <div className="grid gap-1">
+              <Label>Date</Label>
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="grid gap-1">
+              <Label>Start</Label>
+              <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} />
+            </div>
+            <div className="grid gap-1">
+              <Label>End</Label>
+              <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+            </div>
           </div>
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="status">Status</Label>
-            <select
-              id="status"
-              value={status}
-              onChange={(e) => setStatus(normalizeUiStatus(e.target.value))}
-              className="border rounded-md px-2 py-2 text-sm bg-white"
-            >
-              {UI_STATUS.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABEL[s]}
-                </option>
-              ))}
+          <div className={`text-xs ${conflict ? "text-red-600" : "text-green-700"}`}>
+            {conflictHint}
+          </div>
+
+          <div className="grid gap-1">
+            <Label>Status</Label>
+            <select className="border rounded-md px-2 py-1 text-sm" value={status} onChange={(e) => setStatus(e.target.value)}>
+              {UI_STATUS.map(s => (<option key={s} value={s}>{s}</option>))}
             </select>
           </div>
 
-          <div className="grid gap-1.5">
-            <Label>Time</Label>
-            <div className="flex items-center gap-2">
-              <select
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="border rounded-md px-2 py-2 text-sm bg-white"
-                aria-label="Start time"
-              >
-                {[...timeSlots()].map((t) => (
-                  <option key={t} value={t} disabled={disabledForStart(t)}>
-                    {t}
-                  </option>
+          {Boolean(busyRanges.length) && (
+            <div className="rounded-lg border p-2 bg-slate-50">
+              <div className="text-xs font-medium mb-1">Taken on {date}:</div>
+              <ul className="space-y-1">
+                {busyRanges.map((r, i) => (
+                  <li key={i} className="text-xs text-slate-600">
+                    {new Date(r.startISO).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit"})}
+                    {"–"}
+                    {new Date(r.endISO).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit"})}
+                    {r.title ? ` · ${r.title}` : ""}
+                  </li>
                 ))}
-              </select>
-
-              <span className="text-slate-500">to</span>
-
-              <select
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="border rounded-md px-2 py-2 text-sm bg-white"
-                aria-label="End time"
-              >
-                {[...timeSlots()].map((t) => (
-                  <option key={t} value={t} disabled={disabledForEnd(t)}>
-                    {t}
-                  </option>
-                ))}
-              </select>
+              </ul>
             </div>
-            <div className="text-xs text-slate-500">
-              Working hours: {String(OPEN_H).padStart(2, "0")}:00–{CLOSE_H}:00. Overlapping slots are disabled.
-            </div>
-          </div>
+          )}
 
-          <div className="grid gap-1.5">
-            <Label htmlFor="notes">Notes</Label>
-            <Textarea id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Add any relevant notes…" />
-          </div>
+          {err && <div className="text-sm text-red-600">{err}</div>}
 
-          {error && <div className="text-sm text-red-600">{error}</div>}
-
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" onClick={() => setOpen(false)} disabled={loading}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreate} disabled={loading}>
-              {loading ? "Saving…" : "Create"}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button onClick={createAppt} disabled={saving || conflict || !date || !start || !end}>
+              {saving ? "Saving…" : "Create"}
             </Button>
           </div>
         </div>
