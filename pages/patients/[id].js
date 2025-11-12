@@ -9,21 +9,19 @@ import { Separator } from "@/components/ui/separator";
 import PatientNotes from "@/components/PatientNotes";
 import PatientHistory from "@/components/PatientHistory";
 import InlineEditField from "@/components/InlineEditField";
+import PatientQuickAdd from "@/components/PatientQuickAdd";
+import PatientFiles from "@/components/PatientFiles";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// light validators
-const validateEmail = (v) => {
-  if (!v) return null; // allow empty
-  return /^\S+@\S+\.\S+$/.test(v) ? null : "Invalid email format";
-};
+const validateEmail = (v) => (!v ? null : /^\S+@\S+\.\S+$/.test(v) ? null : "Invalid email");
 const validatePhone = (v) => {
   if (!v) return null;
-  const digits = (v || "").replace(/\D/g, "");
-  return digits.length >= 7 ? null : "Phone number looks too short";
+  const d = (v || "").replace(/\D/g, "");
+  return d.length >= 7 ? null : "Phone looks too short";
 };
 
 export default function PatientDetailPage() {
@@ -33,7 +31,7 @@ export default function PatientDetailPage() {
   const [patient, setPatient] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState("");
-  const [tab, setTab] = React.useState("details"); // details | notes | history
+  const [tab, setTab] = React.useState("details"); // details | notes | history | files
 
   React.useEffect(() => {
     if (!id) return;
@@ -45,15 +43,10 @@ export default function PatientDetailPage() {
           return;
         }
 
-        // Try to fetch optional DOB if it exists, but don't require it
+        // Probe for DOB
         let columns = "id, full_name, email, phone";
-        // We'll probe if date_of_birth exists, otherwise ignore
-        const { data: probe, error: probeErr } = await supabase
-          .from("patients")
-          .select("date_of_birth")
-          .limit(1);
-        const hasDob = !probeErr; // if no error, column exists
-        if (hasDob) columns += ", date_of_birth";
+        const { error: probeErr } = await supabase.from("patients").select("date_of_birth").limit(1);
+        if (!probeErr) columns += ", date_of_birth";
 
         const { data, error } = await supabase
           .from("patients")
@@ -73,11 +66,9 @@ export default function PatientDetailPage() {
 
   async function updateField(field, value) {
     if (!patient) return;
-    // optimistic UI
     const prev = patient;
     setPatient((p) => ({ ...p, [field]: value }));
 
-    // Try update; if column is missing (e.g., date_of_birth), catch and rollback
     const { error } = await supabase
       .from("patients")
       .update({ [field]: value })
@@ -87,9 +78,8 @@ export default function PatientDetailPage() {
 
     if (error) {
       setPatient(prev);
-      // helpful message if column missing
       const msg = /column .* does not exist/i.test(error.message)
-        ? `Column "${field}" does not exist. Add it first (or skip editing this field).`
+        ? `Column "${field}" does not exist.`
         : error.message;
       throw new Error(msg);
     }
@@ -119,9 +109,7 @@ export default function PatientDetailPage() {
 
   return (
     <>
-      <Head>
-        <title>{patient.full_name} — Patient</title>
-      </Head>
+      <Head><title>{patient.full_name} — Patient</title></Head>
       <main className="min-h-screen bg-slate-50">
         <section className="max-w-4xl mx-auto px-4 py-8 space-y-4">
           <div className="flex items-start justify-between">
@@ -132,10 +120,22 @@ export default function PatientDetailPage() {
             </div>
           </div>
 
+          {/* Quick add card */}
+          <PatientQuickAdd
+            patientId={patient.id}
+            onCreated={() => {
+              // refresh history if you're on that tab
+              if (tab === "history") {
+                // simple event: patient history component can listen and reload
+                window.dispatchEvent(new CustomEvent("patient-history-refresh", { detail: { patientId: patient.id } }));
+              }
+            }}
+          />
+
           <Card className="p-4">
             {/* Tabs */}
             <div className="flex gap-2">
-              {["details", "notes", "history"].map((t) => (
+              {["details", "notes", "history", "files"].map((t) => (
                 <button
                   key={t}
                   onClick={() => setTab(t)}
@@ -143,7 +143,7 @@ export default function PatientDetailPage() {
                     tab === t ? "bg-slate-900 text-white" : "bg-white hover:bg-slate-50"
                   }`}
                 >
-                  {t === "details" ? "Details" : t === "notes" ? "Notes" : "History"}
+                  {t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
             </div>
@@ -152,33 +152,11 @@ export default function PatientDetailPage() {
 
             {tab === "details" && (
               <div className="grid gap-2 text-sm">
-                <InlineEditField
-                  label="Full name"
-                  value={patient.full_name}
-                  onSave={(v) => updateField("full_name", v)}
-                />
-                <InlineEditField
-                  label="Email"
-                  type="email"
-                  value={patient.email}
-                  validate={validateEmail}
-                  onSave={(v) => updateField("email", v)}
-                />
-                <InlineEditField
-                  label="Phone"
-                  type="tel"
-                  value={patient.phone}
-                  validate={validatePhone}
-                  onSave={(v) => updateField("phone", v)}
-                />
-                {/* DOB: only show editor if the column is present on this record */}
+                <InlineEditField label="Full name" value={patient.full_name} onSave={(v) => updateField("full_name", v)} />
+                <InlineEditField label="Email" type="email" value={patient.email} validate={validateEmail} onSave={(v) => updateField("email", v)} />
+                <InlineEditField label="Phone" type="tel" value={patient.phone} validate={validatePhone} onSave={(v) => updateField("phone", v)} />
                 {"date_of_birth" in patient && (
-                  <InlineEditField
-                    label="Date of birth"
-                    type="date"
-                    value={patient.date_of_birth || ""}
-                    onSave={(v) => updateField("date_of_birth", v)}
-                  />
+                  <InlineEditField label="Date of birth" type="date" value={patient.date_of_birth || ""} onSave={(v) => updateField("date_of_birth", v)} />
                 )}
                 <div className="flex items-center justify-between border rounded-lg bg-white p-3">
                   <div className="text-slate-600">Patient ID</div>
@@ -190,6 +168,8 @@ export default function PatientDetailPage() {
             {tab === "notes" && <PatientNotes patientId={patient.id} />}
 
             {tab === "history" && <PatientHistory patientId={patient.id} />}
+
+            {tab === "files" && <PatientFiles patientId={patient.id} />}
           </Card>
         </section>
       </main>
