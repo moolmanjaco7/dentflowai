@@ -159,9 +159,11 @@ export default function PatientDetailPage() {
                   <InlineEditField label="Date of birth" type="date" value={patient.date_of_birth || ""} onSave={(v) => updateField("date_of_birth", v)} />
                 )}
                 <div className="flex items-center justify-between border rounded-lg bg-white p-3">
-                  <div className="text-slate-600">Patient ID</div>
-                  <div className="font-medium break-all text-right">{patient.id}</div>
-                </div>
+  <div className="text-slate-600">Patient tag</div>
+  <div className="font-medium break-all text-right">
+    {patient.patient_code || (patient.full_name ? (patient.full_name.split(/\s+/)[0] + (patient.full_name.split(/\s+/).slice(-1)[0]?.[0] || "")).replace(/[^A-Za-z]/g,"") : "—")}
+  </div>
+</div>
               </div>
             )}
 

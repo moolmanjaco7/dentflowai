@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { generatePatientCode } from "@/lib/patientCode";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -32,13 +33,23 @@ async function hasConflict(startISO, endISO) {
 }
 
 export default function NewAppointmentModal({ open, onOpenChange, defaultDate, onCreated, patientId: fixedPatientId }) {
-  const [patientId, setPatientId] = React.useState(fixedPatientId || "");
+  // patient selection / creation
+  const [patientQuery, setPatientQuery] = React.useState("");
+  const [patientResults, setPatientResults] = React.useState([]);
+  const [selectedPatientId, setSelectedPatientId] = React.useState(fixedPatientId || null);
+  const [newEmail, setNewEmail] = React.useState("");
+  const [newPhone, setNewPhone] = React.useState("");
+  const creatingNew = !selectedPatientId && patientQuery.trim().length > 0;
+
+  // appointment fields
   const [title, setTitle] = React.useState("");
   const [date, setDate] = React.useState(defaultDate || "");
   const [start, setStart] = React.useState("");
   const [end, setEnd] = React.useState("");
   const [status, setStatus] = React.useState("booked");
-  const [busyRanges, setBusyRanges] = React.useState([]); // [{startISO,endISO}]
+
+  // UI state
+  const [busyRanges, setBusyRanges] = React.useState([]);
   const [err, setErr] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [checking, setChecking] = React.useState(false);
@@ -47,13 +58,31 @@ export default function NewAppointmentModal({ open, onOpenChange, defaultDate, o
   React.useEffect(() => {
     if (!open) return;
     if (defaultDate) setDate(defaultDate);
-  }, [open, defaultDate]);
+    if (fixedPatientId) setSelectedPatientId(fixedPatientId);
+  }, [open, defaultDate, fixedPatientId]);
 
-  // load taken slots for selected day -> lightweight availability indicator
+  // simple live search by name
+  React.useEffect(() => {
+    if (!open) return;
+    const q = patientQuery.trim();
+    if (!q || fixedPatientId) { setPatientResults([]); return; }
+    const run = async () => {
+      const { data, error } = await supabase
+        .from("patients")
+        .select("id, full_name, patient_code, email, phone")
+        .ilike("full_name", `%${q}%`)
+        .order("full_name", { ascending: true })
+        .limit(6);
+      if (!error) setPatientResults(data || []);
+    };
+    const t = setTimeout(run, 250);
+    return () => clearTimeout(t);
+  }, [open, patientQuery, fixedPatientId]);
+
+  // load taken slots for that day
   React.useEffect(() => {
     if (!open || !date) return;
     (async () => {
-      setBusyRanges([]);
       const dayStart = new Date(`${date}T00:00:00${tzOffset}`).toISOString();
       const dayEnd   = new Date(`${date}T23:59:59${tzOffset}`).toISOString();
       const { data, error } = await supabase
@@ -63,19 +92,17 @@ export default function NewAppointmentModal({ open, onOpenChange, defaultDate, o
         .lte("starts_at", dayEnd)
         .order("starts_at", { ascending: true });
       if (!error && data) {
-        setBusyRanges(
-          data.map(r => ({ startISO: r.starts_at, endISO: r.ends_at, title: r.title }))
-        );
+        setBusyRanges(data.map(r => ({ startISO: r.starts_at, endISO: r.ends_at, title: r.title })));
       }
     })();
   }, [open, date]);
 
-  // live conflict check when picking times
+  // live conflict hint
   React.useEffect(() => {
     if (!date || !start || !end) { setConflict(false); return; }
     (async () => {
+      setChecking(true);
       try {
-        setChecking(true);
         const s = toUtcIso(date, start);
         const e = toUtcIso(date, end);
         setConflict(await hasConflict(s, e));
@@ -85,17 +112,41 @@ export default function NewAppointmentModal({ open, onOpenChange, defaultDate, o
     })();
   }, [date, start, end]);
 
+  async function ensurePatientId() {
+    if (selectedPatientId || fixedPatientId) return selectedPatientId || fixedPatientId;
+    // create new patient
+    const full_name = patientQuery.trim();
+    if (!full_name) throw new Error("Enter patient name");
+    const code = await generatePatientCode(supabase, full_name);
+
+    const { data, error } = await supabase
+      .from("patients")
+      .insert({
+        full_name,
+        email: newEmail || null,
+        phone: newPhone || null,
+        patient_code: code
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    return data?.id;
+  }
+
   async function createAppt() {
-    setErr("");
-    if (!patientId) return setErr("Select/enter patient ID");
-    if (!date || !start || !end) return setErr("Pick date, start & end");
-    if (!UI_STATUS.includes(status)) return setErr("Invalid status");
-
-    const starts_at = toUtcIso(date, start);
-    const ends_at = toUtcIso(date, end);
-
     try {
+      setErr("");
+      if (!date || !start || !end) throw new Error("Pick date, start & end");
+      if (!UI_STATUS.includes(status)) throw new Error("Invalid status");
+
       setSaving(true);
+
+      const pid = await ensurePatientId();
+
+      const starts_at = toUtcIso(date, start);
+      const ends_at = toUtcIso(date, end);
+
       if (await hasConflict(starts_at, ends_at)) {
         setConflict(true);
         throw new Error("This time overlaps with another appointment.");
@@ -103,13 +154,7 @@ export default function NewAppointmentModal({ open, onOpenChange, defaultDate, o
 
       const { data, error } = await supabase
         .from("appointments")
-        .insert({
-          patient_id: patientId,
-          title: title || "Appointment",
-          starts_at,
-          ends_at,
-          status,
-        })
+        .insert({ patient_id: pid, title: title || "Appointment", starts_at, ends_at, status })
         .select("id")
         .maybeSingle();
 
@@ -118,13 +163,16 @@ export default function NewAppointmentModal({ open, onOpenChange, defaultDate, o
       if (onCreated) onCreated(data?.id || null);
       onOpenChange(false);
 
-      // toast
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Appointment created", type: "success" } }));
       }
 
-      // reset
-      if (!fixedPatientId) setPatientId("");
+      // reset for next open
+      if (!fixedPatientId) {
+        setSelectedPatientId(null);
+        setPatientQuery("");
+        setNewEmail(""); setNewPhone("");
+      }
       setTitle(""); setStart(""); setEnd("");
     } catch (e) {
       setErr(e.message || "Failed to create appointment");
@@ -133,21 +181,64 @@ export default function NewAppointmentModal({ open, onOpenChange, defaultDate, o
     }
   }
 
-  // small helper to show red/green hint
   const conflictHint = !date || !start || !end ? "" : checking ? "Checking…" : conflict ? "⛔ Overlaps" : "✅ Available";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>New appointment</DialogTitle>
-        </DialogHeader>
+        <DialogHeader><DialogTitle>New appointment</DialogTitle></DialogHeader>
 
         <div className="grid gap-3">
+          {/* Patient select / create */}
           {!fixedPatientId && (
             <div className="grid gap-1">
-              <Label>Patient ID</Label>
-              <Input value={patientId} onChange={(e) => setPatientId(e.target.value)} placeholder="UUID from patients table" />
+              <Label>Patient</Label>
+              <Input
+                placeholder="Type a name (e.g. John Smith)"
+                value={patientQuery}
+                onChange={(e) => {
+                  setPatientQuery(e.target.value);
+                  setSelectedPatientId(null); // reset selection when typing
+                }}
+              />
+              {/* results */}
+              {patientResults.length > 0 && (
+                <div className="border rounded-md max-h-40 overflow-auto bg-white">
+                  {patientResults.map((p) => (
+                    <button
+                      type="button"
+                      key={p.id}
+                      onClick={() => { setSelectedPatientId(p.id); setPatientQuery(p.full_name); }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 ${selectedPatientId===p.id ? "bg-slate-100" : ""}`}
+                    >
+                      <div className="font-medium">{p.full_name}</div>
+                      <div className="text-xs text-slate-500">
+                        {p.patient_code ? `Tag: ${p.patient_code}` : ""} {p.email ? ` · ${p.email}` : ""} {p.phone ? ` · ${p.phone}` : ""}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {/* creation hint */}
+              {creatingNew && (
+                <div className="text-xs text-slate-600">
+                  New patient will be created as <span className="font-medium">“{patientQuery.trim()}”</span>.
+                </div>
+              )}
+
+              {/* extra fields when creating new */}
+              {creatingNew && (
+                <div className="grid sm:grid-cols-2 gap-2 mt-2">
+                  <div className="grid gap-1">
+                    <Label className="text-xs">Email (optional)</Label>
+                    <Input value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="name@clinic.com" />
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-xs">Phone (optional)</Label>
+                    <Input value={newPhone} onChange={(e) => setNewPhone(e.target.value)} placeholder="+27 ..." />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -202,7 +293,7 @@ export default function NewAppointmentModal({ open, onOpenChange, defaultDate, o
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={createAppt} disabled={saving || conflict || !date || !start || !end}>
+            <Button onClick={createAppt} disabled={saving || conflict || !date || !start || !end || (!fixedPatientId && !patientQuery.trim())}>
               {saving ? "Saving…" : "Create"}
             </Button>
           </div>
