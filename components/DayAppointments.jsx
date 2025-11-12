@@ -7,13 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import NewAppointmentModal from "@/components/NewAppointmentModal";
 import EditAppointmentModal from "@/components/EditAppointmentModal";
+import { baseFromName } from "@/lib/patientCode";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// Allowed DB statuses
 const ALLOWED = ["booked","confirmed","checked_in","completed","no_show","cancelled"];
 const STATUS_LABEL = { booked:"Scheduled", confirmed:"Confirmed", checked_in:"Checked-in", completed:"Completed", no_show:"No Show", cancelled:"Cancelled" };
 
@@ -36,26 +36,46 @@ export default function DayAppointments() {
   });
 
   const [list, setList] = React.useState([]);
+  const [patientsMap, setPatientsMap] = React.useState({}); // {id: {patient_code, full_name}}
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState("");
   const [newOpen, setNewOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
   const [editAppt, setEditAppt] = React.useState(null);
-  const [busyRanges, setBusyRanges] = React.useState([]);
 
   const load = React.useCallback(async () => {
     setLoading(true); setErr("");
-    const { s, e } = isoDayBounds(date);
-    const { data, error } = await supabase
-      .from("appointments")
-      .select("id,title,starts_at,ends_at,status,patient_id")
-      .gte("starts_at", s)
-      .lte("starts_at", e)
-      .order("starts_at", { ascending: true });
-    if (error) setErr(error.message);
-    setList(data || []);
-    setBusyRanges((data || []).map(r => ({ startISO: r.starts_at, endISO: r.ends_at, title: r.title })));
-    setLoading(false);
+    try {
+      const { s, e } = isoDayBounds(date);
+      const { data: appts, error } = await supabase
+        .from("appointments")
+        .select("id,title,starts_at,ends_at,status,patient_id")
+        .gte("starts_at", s)
+        .lte("starts_at", e)
+        .order("starts_at", { ascending: true });
+      if (error) throw error;
+
+      setList(appts || []);
+
+      // fetch patients for these appts (no join assumptions)
+      const ids = Array.from(new Set((appts || []).map(a => a.patient_id).filter(Boolean)));
+      if (ids.length) {
+        const { data: pats, error: pErr } = await supabase
+          .from("patients")
+          .select("id, full_name, patient_code")
+          .in("id", ids);
+        if (pErr) throw pErr;
+        const map = {};
+        (pats || []).forEach(p => { map[p.id] = p; });
+        setPatientsMap(map);
+      } else {
+        setPatientsMap({});
+      }
+    } catch (e) {
+      setErr(e.message || "Failed to load appointments");
+    } finally {
+      setLoading(false);
+    }
   }, [date]);
 
   React.useEffect(() => { load(); }, [load]);
@@ -71,6 +91,13 @@ export default function DayAppointments() {
       setList(prev);
       alert(error.message);
     }
+  }
+
+  function tagFor(appt) {
+    if (!appt.patient_id) return null;
+    const p = patientsMap[appt.patient_id];
+    if (!p) return null;
+    return p.patient_code || baseFromName(p.full_name);
   }
 
   return (
@@ -101,33 +128,36 @@ export default function DayAppointments() {
         <p className="text-sm text-slate-600">No appointments.</p>
       ) : (
         <div className="grid md:grid-cols-2 gap-3">
-          {list.map((a) => (
-            <div key={a.id} className="border rounded-xl p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium truncate">{a.title || "Appointment"}</div>
-                  <div className="text-xs text-slate-500">
-                    {new Date(a.starts_at).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit"})}
-                    {"–"}
-                    {new Date(a.ends_at).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit"})}
-                    {a.patient_id && (
-                      <> · <a className="underline" href={`/patients/${a.patient_id}`}>Patient</a></>
-                    )}
+          {list.map((a) => {
+            const tag = tagFor(a);
+            return (
+              <div key={a.id} className="border rounded-xl p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{a.title || "Appointment"}</div>
+                    <div className="text-xs text-slate-500">
+                      {new Date(a.starts_at).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit"})}
+                      {"–"}
+                      {new Date(a.ends_at).toLocaleTimeString("en-ZA",{hour:"2-digit",minute:"2-digit"})}
+                      {a.patient_id && (
+                        <> · <a className="underline" href={`/patients/${a.patient_id}`}>{tag || "Patient"}</a></>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <select
+                      className="border rounded-md px-2 py-1 text-xs"
+                      value={a.status}
+                      onChange={(e) => setStatus(a.id, e.target.value)}
+                    >
+                      {ALLOWED.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+                    </select>
+                    <Button size="sm" variant="outline" onClick={() => openEdit(a)}>Edit</Button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <select
-                    className="border rounded-md px-2 py-1 text-xs"
-                    value={a.status}
-                    onChange={(e) => setStatus(a.id, e.target.value)}
-                  >
-                    {ALLOWED.map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-                  </select>
-                  <Button size="sm" variant="outline" onClick={() => openEdit(a)}>Edit</Button>
-                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

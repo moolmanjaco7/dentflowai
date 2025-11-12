@@ -11,6 +11,15 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
+{/* at the top bar of patients index page */}
+<div className="flex items-center justify-between mb-4">
+  <h1 className="text-2xl font-bold text-slate-900">Patients</h1>
+  <a href="/patients/new">
+    <button className="inline-flex items-center rounded-md border px-3 py-2 text-sm hover:bg-slate-50">+ Add patient</button>
+  </a>
+</div>
+
+
 export default function PatientsIndex() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
