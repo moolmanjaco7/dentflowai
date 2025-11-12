@@ -19,17 +19,29 @@ export default function PatientNotes({ patientId }) {
 
   async function load() {
     setErr("");
+    // Select both possible columns: note OR notes
     const { data, error } = await supabase
       .from("patient_notes")
-      .select("id, note, author, created_at")
+      .select("id, author, created_at, note, notes")
       .eq("patient_id", patientId)
       .order("created_at", { ascending: false });
+
     if (error) {
       setErr(error.message);
       setNotes([]);
       return;
     }
-    setNotes(Array.isArray(data) ? data : []);
+
+    const rows = Array.isArray(data) ? data : [];
+    // Normalize to { id, text, author, created_at }
+    setNotes(
+      rows.map((r) => ({
+        id: r.id,
+        text: r.note ?? r.notes ?? "",
+        author: r.author || "staff",
+        created_at: r.created_at,
+      }))
+    );
   }
 
   React.useEffect(() => {
@@ -38,16 +50,31 @@ export default function PatientNotes({ patientId }) {
   }, [patientId]);
 
   async function addNote() {
-    if (!newNote.trim()) return;
+    const text = newNote.trim();
+    if (!text) return;
     setSaving(true);
     setErr("");
+
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const author = user?.email || "staff";
-      const { error } = await supabase
-        .from("patient_notes")
-        .insert({ patient_id: patientId, note: newNote.trim(), author });
-      if (error) throw error;
+
+      // Try insert using `note` first; if it fails because column doesn't exist, retry with `notes`
+      let ins = await supabase.from("patient_notes").insert({
+        patient_id: patientId,
+        note: text,
+        author,
+      });
+
+      if (ins.error && /column .*note.* does not exist/i.test(ins.error.message)) {
+        ins = await supabase.from("patient_notes").insert({
+          patient_id: patientId,
+          notes: text,
+          author,
+        });
+      }
+
+      if (ins.error) throw ins.error;
       setNewNote("");
       await load();
     } catch (e) {
@@ -64,8 +91,7 @@ export default function PatientNotes({ patientId }) {
     setNotes((n) => n.filter((x) => x.id !== id));
     const { error } = await supabase.from("patient_notes").delete().eq("id", id);
     if (error) {
-      // rollback
-      setNotes(prev);
+      setNotes(prev); // rollback
       alert("Failed to delete note");
     }
   }
@@ -80,7 +106,7 @@ export default function PatientNotes({ patientId }) {
           placeholder="Add clinical notes, instructions, follow-up reminders…"
           rows={3}
         />
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <Button onClick={addNote} disabled={saving}>
             {saving ? "Saving…" : "Add note"}
           </Button>
@@ -100,7 +126,7 @@ export default function PatientNotes({ patientId }) {
                 <div className="text-xs text-slate-500">
                   {new Date(n.created_at).toLocaleString("en-ZA")}
                   {" · "}
-                  {n.author || "staff"}
+                  {n.author}
                 </div>
                 <button
                   onClick={() => removeNote(n.id)}
@@ -109,7 +135,7 @@ export default function PatientNotes({ patientId }) {
                   Delete
                 </button>
               </div>
-              <div className="text-sm mt-1 whitespace-pre-wrap">{n.note}</div>
+              <div className="text-sm mt-1 whitespace-pre-wrap">{n.text}</div>
             </div>
           ))
         )}
