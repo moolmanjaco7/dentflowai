@@ -34,9 +34,10 @@ export default function PatientDetailPage() {
           return;
         }
 
+        // ✅ Only select columns that exist in your schema
         const { data, error } = await supabase
           .from("patients")
-          .select("id, full_name, email, phone, date_of_birth, created_at")
+          .select("id, full_name, email, phone")
           .eq("id", id)
           .maybeSingle();
 
@@ -110,18 +111,7 @@ export default function PatientDetailPage() {
                 <Row label="Full name" value={patient.full_name || "—"} />
                 <Row label="Email" value={patient.email || "—"} />
                 <Row label="Phone" value={patient.phone || "—"} />
-                <Row
-                  label="Date of birth"
-                  value={
-                    patient.date_of_birth
-                      ? new Date(patient.date_of_birth).toLocaleDateString("en-ZA")
-                      : "—"
-                  }
-                />
-                <Row
-                  label="Created"
-                  value={new Date(patient.created_at).toLocaleString("en-ZA")}
-                />
+                <Row label="Patient ID" value={patient.id} />
               </div>
             )}
 
@@ -139,7 +129,7 @@ function Row({ label, value }) {
   return (
     <div className="flex items-center justify-between border rounded-lg bg-white p-3">
       <div className="text-slate-600">{label}</div>
-      <div className="font-medium">{value}</div>
+      <div className="font-medium break-all text-right">{String(value ?? "—")}</div>
     </div>
   );
 }
