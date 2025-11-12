@@ -43,7 +43,9 @@ export default function App({ Component, pageProps }) {
 <div className="pt-14">
   <Component {...pageProps} />
   <CookieNotice />
+  <div id="app-footer-root">
   <SiteFooter />
+</div>
 </div>
 
     </ErrorBoundary>

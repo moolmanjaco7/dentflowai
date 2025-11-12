@@ -11,8 +11,9 @@ import NewAppointmentModal from "@/components/NewAppointmentModal";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 
-// ✅ Centralized status utilities
 import {
   UI_STATUS,
   STATUS_LABEL,
@@ -22,7 +23,6 @@ import {
 } from "@/lib/status";
 
 const TZ = "Africa/Johannesburg";
-
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -37,9 +37,14 @@ export default function PatientDetailsPage() {
   const [err, setErr] = useState("");
 
   const [patient, setPatient] = useState(null);
-  const [upcoming, setUpcoming] = useState([]); // starts_at >= now
-  const [history, setHistory] = useState([]);   // starts_at < now
+  const [upcoming, setUpcoming] = useState([]);
+  const [history, setHistory] = useState([]);
   const [statusSaving, setStatusSaving] = useState(null);
+
+  // Notes
+  const [notes, setNotes] = useState([]);
+  const [noteText, setNoteText] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
 
   async function load() {
     if (!id) return;
@@ -62,7 +67,6 @@ export default function PatientDetailsPage() {
       if (pErr) throw pErr;
       setPatient(p);
 
-      // Time split
       const nowIso = new Date().toISOString();
 
       // Upcoming
@@ -86,11 +90,20 @@ export default function PatientDetailsPage() {
       const hydrate = (rows) =>
         (Array.isArray(rows) ? rows : []).map((a) => ({
           ...a,
-          status: toUiStatus(a.status), // ✅ DB → UI safe mapping
+          status: toUiStatus(a.status),
         }));
 
       setUpcoming(hydrate(up));
       setHistory(hydrate(hist));
+
+      // Notes
+      const { data: nts, error: nErr } = await supabase
+        .from("patient_notes")
+        .select("id, content, author, created_at")
+        .eq("patient_id", id)
+        .order("created_at", { ascending: false });
+      if (nErr) throw nErr;
+      setNotes(Array.isArray(nts) ? nts : []);
     } catch (e) {
       setErr(e?.message || "Failed to load patient");
     } finally {
@@ -119,13 +132,11 @@ export default function PatientDetailsPage() {
   }, [upcoming, history]);
 
   async function changeStatus(aptId, newUiStatus) {
-    const newDb = toDbStatus(newUiStatus); // ✅ UI → DB safe mapping
+    const newDb = toDbStatus(newUiStatus);
     const prevU = upcoming;
     const prevH = history;
 
     setStatusSaving(aptId);
-
-    // optimistic update
     const norm = normalizeUiStatus(newUiStatus);
     setUpcoming((list) => list.map((a) => (a.id === aptId ? { ...a, status: norm } : a)));
     setHistory((list) => list.map((a) => (a.id === aptId ? { ...a, status: norm } : a)));
@@ -138,18 +149,37 @@ export default function PatientDetailsPage() {
         .select("id")
         .maybeSingle();
       if (error) throw error;
-      window.dispatchEvent(
-        new CustomEvent("toast", { detail: { title: "Status updated", type: "success" } })
-      );
+      window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Status updated", type: "success" } }));
     } catch (e) {
-      // revert
       setUpcoming(prevU);
       setHistory(prevH);
-      window.dispatchEvent(
-        new CustomEvent("toast", { detail: { title: "Failed to update", type: "error" } })
-      );
+      window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Failed to update", type: "error" } }));
     } finally {
       setStatusSaving(null);
+    }
+  }
+
+  async function addNote() {
+    if (!noteText.trim()) return;
+    setNoteSaving(true);
+    try {
+      const { data, error } = await supabase
+        .from("patient_notes")
+        .insert({
+          patient_id: id,
+          content: noteText.trim(),
+          author: session?.user?.email || null,
+        })
+        .select("id, content, author, created_at")
+        .maybeSingle();
+      if (error) throw error;
+      setNotes((n) => [data, ...n]);
+      setNoteText("");
+      window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Note added", type: "success" } }));
+    } catch (e) {
+      window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Failed to add note", type: "error" } }));
+    } finally {
+      setNoteSaving(false);
     }
   }
 
@@ -157,7 +187,6 @@ export default function PatientDetailsPage() {
     <>
       <Head><title>DentFlow AI — Patient</title></Head>
       <Toasts />
-
       <main className="min-h-screen bg-slate-50">
         <section className="max-w-6xl mx-auto px-4 py-8">
           <div className="flex items-center justify-between gap-3 mb-4">
@@ -176,9 +205,7 @@ export default function PatientDetailsPage() {
                   onCreated={load}
                 />
               )}
-              <Link href="/patients" className="text-sm underline">
-                Back to Patients
-              </Link>
+              <Link href="/patients" className="text-sm underline">Back to Patients</Link>
             </div>
           </div>
 
@@ -193,9 +220,9 @@ export default function PatientDetailsPage() {
             <Chip label="Cancelled" value={stats.cancelled} />
           </div>
 
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid lg:grid-cols-3 gap-4">
             {/* Upcoming */}
-            <Card className="p-3">
+            <Card className="p-3 lg:col-span-2">
               <div className="text-sm font-semibold mb-2">Upcoming</div>
               {loading ? (
                 <Loader />
@@ -215,8 +242,38 @@ export default function PatientDetailsPage() {
               )}
             </Card>
 
-            {/* History */}
+            {/* Notes */}
             <Card className="p-3">
+              <div className="text-sm font-semibold mb-2">Notes</div>
+              <div className="space-y-2">
+                <Textarea
+                  placeholder="Write a note about this patient…"
+                  value={noteText}
+                  onChange={(e)=>setNoteText(e.target.value)}
+                />
+                <Button disabled={noteSaving || !noteText.trim()} onClick={addNote}>
+                  {noteSaving ? "Saving…" : "Add note"}
+                </Button>
+              </div>
+              <Separator className="my-3" />
+              {notes.length === 0 ? (
+                <div className="text-sm text-slate-600">No notes yet.</div>
+              ) : (
+                <ul className="space-y-2">
+                  {notes.map(n => (
+                    <li key={n.id} className="rounded-md border p-2 bg-white">
+                      <div className="text-xs text-slate-500">
+                        {new Date(n.created_at).toLocaleString("en-ZA")} · {n.author || "—"}
+                      </div>
+                      <div className="text-sm whitespace-pre-wrap">{n.content}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+
+            {/* History */}
+            <Card className="p-3 lg:col-span-2">
               <div className="text-sm font-semibold mb-2">History</div>
               {loading ? (
                 <Loader />

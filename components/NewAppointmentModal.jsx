@@ -97,44 +97,38 @@ export default function NewAppointmentModal({
     })();
   }, []);
 
-  // Load taken slots for the chosen day
-  React.useEffect(() => {
-    (async () => {
-      const day = fmtDateLocalYYYYMMDD(defaultDate, TZ);
-      // Query for all appts starting that day (in UTC bounds for safety)
-      const startBound = new Date(`${day}T00:00:00`);
-      const endBound = new Date(`${day}T23:59:59.999`);
+  // Load taken slots for the chosen day (TZ-correct)
+React.useEffect(() => {
+  (async () => {
+    // Build local day start/end in clinic TZ, then convert to UTC ISO
+    const startLocalStr = `${fmtDateLocalYYYYMMDD(defaultDate, TZ)} 00:00:00`;
+    const endLocalStr   = `${fmtDateLocalYYYYMMDD(defaultDate, TZ)} 23:59:59`;
+    const startUtc = toDate(startLocalStr, { timeZone: TZ });
+    const endUtc   = toDate(endLocalStr,   { timeZone: TZ });
 
-      // Convert bounds to ISO (UTC)
-      const { data, error } = await supabase
-        .from("appointments")
-        .select("starts_at, ends_at")
-        .gte("starts_at", startBound.toISOString())
-        .lte("starts_at", endBound.toISOString());
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("starts_at, ends_at")
+      .gte("starts_at", startUtc.toISOString())
+      .lte("starts_at", endUtc.toISOString());
 
-      if (error) {
-        // Fail softly; DB constraint will still protect
-        setTaken([]);
-        return;
-      }
+    if (error) {
+      setTaken([]);
+      return;
+    }
 
-      const tz = TZ;
-      const blocks = (Array.isArray(data) ? data : []).map((a) => {
-        // Convert the UTC timestamps into LOCAL time numbers (minutes since 00:00)
-        const sLocal = new Date(
-          new Date(a.starts_at).toLocaleString("en-ZA", { timeZone: tz })
-        );
-        const eLocal = new Date(
-          new Date((a.ends_at || a.starts_at)).toLocaleString("en-ZA", { timeZone: tz })
-        );
-        const sHM = sLocal.getHours() * 60 + sLocal.getMinutes();
-        const eHM = eLocal.getHours() * 60 + eLocal.getMinutes();
-        return [sHM, eHM];
-      });
+    // Convert UTC from DB into LOCAL minutes since midnight in clinic TZ
+    const blocks = (Array.isArray(data) ? data : []).map((a) => {
+      const sLocal = new Date(new Date(a.starts_at).toLocaleString("en-ZA", { timeZone: TZ }));
+      const eLocal = new Date(new Date((a.ends_at || a.starts_at)).toLocaleString("en-ZA", { timeZone: TZ }));
+      return [sLocal.getHours() * 60 + sLocal.getMinutes(), eLocal.getHours() * 60 + eLocal.getMinutes()];
+    });
 
-      setTaken(blocks);
-    })();
-  }, [defaultDate]);
+    setTaken(blocks);
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [defaultDate]);
+
 
   // Quick server check (belt & braces). Uses tstzrange ‘overlaps’ if you added time_range column.
   async function hasOverlap(startsAtIso, endsAtIso) {
@@ -258,7 +252,7 @@ export default function NewAppointmentModal({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline">New appointment</Button>
+        <Button variant="outline">New appointment (no overlaps)</Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>

@@ -18,6 +18,10 @@ export default function SiteFooter() {
           >
             Book a Demo
           </Link>
+          <div className="text-xs text-slate-500">
+  Build: {(process.env.VERCEL_GIT_COMMIT_SHA || "").slice(0,7) || "dev"}
+</div>
+
         </div>
       </div>
     </footer>
