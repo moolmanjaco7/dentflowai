@@ -9,7 +9,6 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import Toasts from "@/components/Toast";
-import SkeletonList from "@/components/Skeleton";
 import {
   UI_STATUS,
   STATUS_LABEL,
@@ -44,8 +43,12 @@ export default function DayAppointments() {
   const [err, setErr] = React.useState("");
   const [savingId, setSavingId] = React.useState(null);
 
-  // fade animation on reload
+  // UX polish
   const [fading, setFading] = React.useState(false);
+
+  // NEW: search & status filter
+  const [query, setQuery] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState("all"); // "all" or one of UI_STATUS
 
   const patientName = React.useCallback(
     (pid) => patients.get(pid) || "—",
@@ -94,7 +97,7 @@ export default function DayAppointments() {
       setErr(e?.message || "Failed to load appointments");
     } finally {
       setLoading(false);
-      setTimeout(() => setFading(false), 150); // smoothen the transition
+      setTimeout(() => setFading(false), 150);
     }
   }
 
@@ -156,7 +159,7 @@ export default function DayAppointments() {
     }
   }
 
-  // Status counters
+  // Status counters (total for the day, not filtered)
   const counts = React.useMemo(() => {
     const c = Object.fromEntries(UI_STATUS.map((s) => [s, 0]));
     for (const a of appointments) {
@@ -166,12 +169,64 @@ export default function DayAppointments() {
     return c;
   }, [appointments]);
 
+  // NEW: apply query + status filter to visible list
+  const filtered = React.useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return appointments.filter((a) => {
+      const okStatus =
+        statusFilter === "all" ? true : normalizeUiStatus(a.status) === statusFilter;
+      if (!okStatus) return false;
+
+      if (!needle) return true;
+
+      const pn = (patientName(a.patient_id) || "").toLowerCase();
+      const tt = (a.title || "").toLowerCase();
+      const nt = (a.notes || "").toLowerCase();
+      return pn.includes(needle) || tt.includes(needle) || nt.includes(needle);
+    });
+  }, [appointments, query, statusFilter, patientName]);
+
+  // NEW: export CSV (filtered list)
+  function exportCsv() {
+    const headers = [
+      "Title",
+      "Patient",
+      "Status",
+      "Start",
+      "End",
+      "Notes",
+    ];
+    const rows = filtered.map((a) => [
+      (a.title || "Appointment").replaceAll('"', '""'),
+      (patientName(a.patient_id) || "").replaceAll('"', '""'),
+      STATUS_LABEL[normalizeUiStatus(a.status)] || "Scheduled",
+      new Date(a.starts_at).toLocaleString("en-ZA"),
+      new Date(a.ends_at || a.starts_at).toLocaleString("en-ZA"),
+      (a.notes || "").replaceAll('"', '""'),
+    ]);
+
+    const csv =
+      headers.join(",") +
+      "\n" +
+      rows.map((r) => r.map((x) => `"${x}"`).join(",")).join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const d = format(selectedDate, "yyyy-MM-dd");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `appointments_${d}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <Card className="p-4">
       <Toasts />
-      <div className="flex items-center justify-between gap-3">
+      {/* Header row */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <h2 className="text-lg font-semibold">Appointments by Day</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <label className="text-sm text-slate-600">Date</label>
           <Input
             type="date"
@@ -188,33 +243,74 @@ export default function DayAppointments() {
           >
             Refresh
           </button>
+          {/* NEW: Export CSV */}
+          <button
+            onClick={exportCsv}
+            className="text-sm px-3 py-2 rounded-md border bg-white hover:bg-slate-50"
+            title="Export filtered list as CSV"
+          >
+            Export CSV
+          </button>
         </div>
       </div>
 
-      {/* status chips */}
-      <div className="mt-3 flex flex-wrap gap-2 text-xs">
-        {UI_STATUS.map((s) => (
-          <div
-            key={s}
-            className="px-2 py-1 rounded-full border bg-slate-50 text-slate-700"
-            title={STATUS_LABEL[s]}
+      {/* NEW: Filters row */}
+      <div className="mt-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        {/* Status chips (day totals) */}
+        <div className="flex flex-wrap gap-2 text-xs">
+          {UI_STATUS.map((s) => (
+            <div
+              key={s}
+              className="px-2 py-1 rounded-full border bg-slate-50 text-slate-700"
+              title={STATUS_LABEL[s]}
+            >
+              <span className="font-medium">{STATUS_LABEL[s]}:</span> {counts[s] ?? 0}
+            </div>
+          ))}
+        </div>
+
+        {/* Search + status filter */}
+        <div className="flex items-center gap-2">
+          <Input
+            placeholder="Search patient, title, notes…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-[240px]"
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="text-sm border rounded-md px-2 py-2 bg-white"
+            aria-label="Filter by status"
           >
-            <span className="font-medium">{STATUS_LABEL[s]}:</span> {counts[s] ?? 0}
-          </div>
-        ))}
+            <option value="all">All statuses</option>
+            {UI_STATUS.map((s) => (
+              <option key={s} value={s}>
+                {STATUS_LABEL[s]}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <Separator className="my-3" />
 
       {loading ? (
-        <SkeletonList rows={4} />
+        <div className="flex items-center gap-2 text-sm text-slate-600">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-transparent" />
+          Loading…
+        </div>
       ) : err ? (
         <div className="text-sm text-red-600">{err}</div>
-      ) : appointments.length === 0 ? (
-        <div className="text-sm text-slate-600">No appointments for this day.</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-sm text-slate-600">No appointments match your filters.</div>
       ) : (
-        <ul className={`space-y-2 transition-opacity duration-200 ${fading ? "opacity-70" : "opacity-100"}`}>
-          {appointments.map((a) => (
+        <ul
+          className={`space-y-2 transition-opacity duration-200 ${
+            fading ? "opacity-70" : "opacity-100"
+          }`}
+        >
+          {filtered.map((a) => (
             <li key={a.id} className="rounded-lg border p-3 bg-white hover:shadow-sm transition">
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-1">
