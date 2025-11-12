@@ -9,7 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import Toasts from "@/components/Toast";
-
+import SkeletonList from "@/components/Skeleton";
 import {
   UI_STATUS,
   STATUS_LABEL,
@@ -44,23 +44,25 @@ export default function DayAppointments() {
   const [err, setErr] = React.useState("");
   const [savingId, setSavingId] = React.useState(null);
 
+  // fade animation on reload
+  const [fading, setFading] = React.useState(false);
+
   const patientName = React.useCallback(
     (pid) => patients.get(pid) || "—",
     [patients]
   );
 
   async function load() {
-    setLoading(true);
     setErr("");
+    setFading(true);
     try {
-      // Ensure logged in
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         if (typeof window !== "undefined") window.location.href = "/auth/login";
         return;
       }
 
-      // Patients (map id -> full_name)
+      // Patients map
       const { data: pats } = await supabase
         .from("patients")
         .select("id, full_name")
@@ -71,10 +73,8 @@ export default function DayAppointments() {
       (Array.isArray(pats) ? pats : []).forEach((p) => map.set(p.id, p.full_name));
       setPatients(map);
 
-      // Day range in UTC
       const { startUtc, endUtc } = startEndOfDayInUtc(selectedDate);
 
-      // Appointments for that day
       const { data: appts, error: aErr } = await supabase
         .from("appointments")
         .select("id, title, starts_at, ends_at, status, patient_id, notes")
@@ -86,7 +86,7 @@ export default function DayAppointments() {
 
       const hydrated = (Array.isArray(appts) ? appts : []).map((a) => ({
         ...a,
-        status: toUiStatus(a.status), // DB → UI mapping
+        status: toUiStatus(a.status),
       }));
 
       setAppointments(hydrated);
@@ -94,13 +94,29 @@ export default function DayAppointments() {
       setErr(e?.message || "Failed to load appointments");
     } finally {
       setLoading(false);
+      setTimeout(() => setFading(false), 150); // smoothen the transition
     }
   }
 
+  // Initial + on date change
   React.useEffect(() => {
+    setLoading(true);
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedDate]);
+
+  // Listen for QuickActions events
+  React.useEffect(() => {
+    const onRefresh = () => load();
+    const onToday = () => setSelectedDate(new Date());
+    window.addEventListener("refresh-day-appts", onRefresh);
+    window.addEventListener("go-today", onToday);
+    return () => {
+      window.removeEventListener("refresh-day-appts", onRefresh);
+      window.removeEventListener("go-today", onToday);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function changeStatus(aptId, newUiStatusRaw) {
     const newUi = normalizeUiStatus(newUiStatusRaw);
@@ -129,7 +145,6 @@ export default function DayAppointments() {
         })
       );
     } catch (e) {
-      // revert
       setAppointments(prev);
       window.dispatchEvent(
         new CustomEvent("toast", {
@@ -140,6 +155,16 @@ export default function DayAppointments() {
       setSavingId(null);
     }
   }
+
+  // Status counters
+  const counts = React.useMemo(() => {
+    const c = Object.fromEntries(UI_STATUS.map((s) => [s, 0]));
+    for (const a of appointments) {
+      const k = normalizeUiStatus(a.status);
+      if (c[k] !== undefined) c[k]++;
+    }
+    return c;
+  }, [appointments]);
 
   return (
     <Card className="p-4">
@@ -152,10 +177,8 @@ export default function DayAppointments() {
             type="date"
             value={format(selectedDate, "yyyy-MM-dd")}
             onChange={(e) => {
-              const parts = e.target.value.split("-");
-              // yyyy-mm-dd → Date in local TZ is fine; we convert properly later
-              const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-              setSelectedDate(d);
+              const [y, m, d] = e.target.value.split("-").map(Number);
+              setSelectedDate(new Date(y, m - 1, d));
             }}
             className="w-[160px]"
           />
@@ -168,25 +191,36 @@ export default function DayAppointments() {
         </div>
       </div>
 
+      {/* status chips */}
+      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+        {UI_STATUS.map((s) => (
+          <div
+            key={s}
+            className="px-2 py-1 rounded-full border bg-slate-50 text-slate-700"
+            title={STATUS_LABEL[s]}
+          >
+            <span className="font-medium">{STATUS_LABEL[s]}:</span> {counts[s] ?? 0}
+          </div>
+        ))}
+      </div>
+
       <Separator className="my-3" />
 
       {loading ? (
-        <div className="flex items-center gap-2 text-sm text-slate-600">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-transparent" />
-          Loading…
-        </div>
+        <SkeletonList rows={4} />
       ) : err ? (
         <div className="text-sm text-red-600">{err}</div>
       ) : appointments.length === 0 ? (
         <div className="text-sm text-slate-600">No appointments for this day.</div>
       ) : (
-        <ul className="space-y-2">
+        <ul className={`space-y-2 transition-opacity duration-200 ${fading ? "opacity-70" : "opacity-100"}`}>
           {appointments.map((a) => (
-            <li key={a.id} className="rounded-lg border p-3 bg-white">
+            <li key={a.id} className="rounded-lg border p-3 bg-white hover:shadow-sm transition">
               <div className="flex items-start justify-between gap-3">
                 <div className="space-y-1">
                   <div className="text-sm font-medium">
-                    {a.title || "Appointment"} · <span className="text-slate-600">{patientName(a.patient_id)}</span>
+                    {a.title || "Appointment"} ·{" "}
+                    <span className="text-slate-600">{patientName(a.patient_id)}</span>
                   </div>
                   <div className="text-xs text-slate-500">
                     {new Date(a.starts_at).toLocaleTimeString("en-ZA", {
