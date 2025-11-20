@@ -13,6 +13,8 @@ import PatientQuickAdd from "@/components/PatientQuickAdd";
 import PatientFiles from "@/components/PatientFiles";
 import PatientFilesCard from "@/components/PatientFilesCard";
 import { baseFromName } from "@/lib/patientCode";
+import { createClient } from "@supabase/supabase-js";
+
 
 
 const supabase = createClient(
@@ -141,6 +143,37 @@ export default function PatientDetailPage() {
     patientTag={patient.patient_code || (patient.full_name ? baseFromName(patient.full_name) : "")}
   />
 </div>
+{/* Quick Procedure → creates a recall via rule */}
+<div className="mt-6 rounded-2xl border bg-white p-4">
+  <h2 className="text-sm font-semibold">Log procedure (creates recall)</h2>
+  <div className="grid sm:grid-cols-3 gap-2 mt-3">
+    <select id="rule" className="border rounded-md px-2 py-1 text-sm">
+      <option value="6M_CHECKUP">6-month check-up</option>
+      <option value="12M_CHECKUP">12-month check-up</option>
+    </select>
+    <input id="performed" type="date" className="border rounded-md px-2 py-1 text-sm" />
+    <button
+      className="border rounded-md px-3 py-2 text-sm hover:bg-slate-50"
+      onClick={async () => {
+        const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+        const rule = document.getElementById("rule").value;
+        const performed = document.getElementById("performed").value;
+        if (!performed) { alert("Pick a date"); return; }
+        const { error } = await supabase
+          .from("patient_procedures")
+          .insert({ patient_id: patient.id, rule_code: rule, performed_on: performed });
+        if (error) return alert(error.message);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Procedure logged", type: "success" } }));
+        }
+      }}
+    >
+      Save
+    </button>
+  </div>
+  <p className="text-xs text-slate-500 mt-2">A recall will be created automatically based on the rule (6 or 12 months).</p>
+</div>
+
 
           <Card className="p-4">
             {/* Tabs */}

@@ -2,7 +2,11 @@
 "use client";
 import * as React from "react";
 import { createClient } from "@supabase/supabase-js";
+import { v4 as uuidv4 } from "uuid";
+import { PATIENT_FILES_BUCKET, pathJoin, isImage, isPDF } from "@/lib/storage";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 
 const supabase = createClient(
@@ -10,133 +14,172 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-const BUCKET = "patient-files";
-
 export default function PatientFiles({ patientId }) {
-  const [files, setFiles] = React.useState([]);
-  const [uploading, setUploading] = React.useState(false);
+  const [files, setFiles] = React.useState([]); // [{name, id?, updated_at?, created_at?, ...}]
+  const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState("");
+  const [uploading, setUploading] = React.useState(false);
+  const [previewUrl, setPreviewUrl] = React.useState(null); // signed URL
 
-  async function load() {
+  const folder = String(patientId || "").trim();
+
+  const load = React.useCallback(async () => {
+    if (!folder) return;
+    setLoading(true);
     setErr("");
-    const { data, error } = await supabase
-      .from("patient_files")
-      .select("id, file_name, file_path, file_type, created_at, author")
-      .eq("patient_id", patientId)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setErr(error.message);
-      setFiles([]);
-      return;
+    try {
+      const { data, error } = await supabase
+        .storage
+        .from(PATIENT_FILES_BUCKET)
+        .list(folder, {
+          limit: 100,
+          sortBy: { column: "created_at", order: "desc" }
+        });
+      if (error) throw error;
+      setFiles(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setErr(e.message || "Failed to list files");
+    } finally {
+      setLoading(false);
     }
-    setFiles(data || []);
+  }, [folder]);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  async function sign(path) {
+    const { data, error } = await supabase
+      .storage
+      .from(PATIENT_FILES_BUCKET)
+      .createSignedUrl(path, 60 * 60); // 1 hour
+    if (error) throw error;
+    return data?.signedUrl;
   }
 
-  React.useEffect(() => {
-    if (patientId) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [patientId]);
-
   async function onPick(e) {
-    const picked = e.target.files;
-    if (!picked || picked.length === 0) return;
-
-    setUploading(true);
+    const f = e.target.files?.[0];
+    if (!f || !folder) return;
     setErr("");
-
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const author = user?.email || "staff";
-      const now = Date.now();
+      setUploading(true);
+      const extension = f.name.includes(".") ? f.name.split(".").pop() : "bin";
+      const safeBase = f.name.replace(/[^\w.\-() ]+/g, "").slice(-80) || "file";
+      const key = pathJoin(folder, `${uuidv4()}-${safeBase}`);
 
-      for (const file of picked) {
-        const path = `${patientId}/${now}-${file.name}`;
-        const up = await supabase.storage.from(BUCKET).upload(path, file, { upsert: false });
-        if (up.error) throw up.error;
-
-        // If bucket is public, you can build a public URL; otherwise keep path.
-        // Store a DB row for listing
-        const ins = await supabase.from("patient_files").insert({
-          patient_id: patientId,
-          file_name: file.name,
-          file_path: path,
-          file_type: file.type || null,
-          author,
+      const { error } = await supabase
+        .storage
+        .from(PATIENT_FILES_BUCKET)
+        .upload(key, f, {
+          cacheControl: "3600",
+          upsert: false,
+          contentType: f.type || undefined
         });
-        if (ins.error) throw ins.error;
-      }
-
-      // reload list
-      await load();
+      if (error) throw error;
 
       // toast (optional)
       if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("toast", { detail: { title: "Files uploaded", type: "success" } }));
+        window.dispatchEvent(new CustomEvent("toast", { detail: { title: "File uploaded", type: "success" } }));
       }
-    } catch (e) {
-      setErr(e.message || "Upload failed");
+      await load();
+      e.target.value = "";
+    } catch (e2) {
+      setErr(e2.message || "Upload failed");
     } finally {
       setUploading(false);
-      e.target.value = ""; // reset input
     }
   }
 
-  async function download(path) {
-    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, 60);
-    if (error || !data?.signedUrl) {
-      alert(error?.message || "Could not get download link");
-      return;
+  async function onDelete(name) {
+    if (!name || !folder) return;
+    if (!confirm("Delete this file?")) return;
+    try {
+      const path = pathJoin(folder, name);
+      const { error } = await supabase
+        .storage
+        .from(PATIENT_FILES_BUCKET)
+        .remove([path]);
+      if (error) throw error;
+      await load();
+    } catch (e) {
+      alert(e.message || "Delete failed");
     }
-    window.open(data.signedUrl, "_blank");
   }
 
-  async function remove(id, path) {
-    const ok = confirm("Delete this file?");
-    if (!ok) return;
-
-    const prev = files;
-    setFiles((arr) => arr.filter((f) => f.id !== id));
-
-    const { error: dbErr } = await supabase.from("patient_files").delete().eq("id", id);
-    const { error: stErr } = await supabase.storage.from(BUCKET).remove([path]);
-
-    if (dbErr || stErr) {
-      setFiles(prev);
-      alert(dbErr?.message || stErr?.message || "Delete failed");
+  async function openPreview(name) {
+    try {
+      const url = await sign(pathJoin(folder, name));
+      setPreviewUrl(url);
+    } catch (e) {
+      alert(e.message || "Could not open file");
     }
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <label className="text-sm font-medium">Upload file(s)</label>
-        <input type="file" multiple onChange={onPick} disabled={uploading} />
-        {uploading && <span className="text-sm text-slate-600">Uploading…</span>}
-        {err && <span className="text-sm text-red-600">{err}</span>}
+    <div className="rounded-2xl border bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold">Files & documents</div>
+        <div className="flex items-center gap-2">
+          <Label className="text-xs">Upload</Label>
+          <Input type="file" onChange={onPick} disabled={uploading} />
+          <Button variant="outline" size="sm" onClick={load}>Refresh</Button>
+        </div>
       </div>
 
-      <Separator />
+      <Separator className="my-3" />
 
-      {files.length === 0 ? (
-        <p className="text-sm text-slate-600">No files uploaded.</p>
+      {err && <div className="text-sm text-red-600 mb-2">{err}</div>}
+
+      {loading ? (
+        <p className="text-sm text-slate-600">Loading…</p>
+      ) : files.length === 0 ? (
+        <p className="text-sm text-slate-600">No files yet. Upload x-rays, treatment plans, photos, PDFs…</p>
       ) : (
-        <ul className="space-y-2">
-          {files.map((f) => (
-            <li key={f.id} className="rounded-lg border bg-white p-3 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-medium truncate">{f.file_name}</div>
-                <div className="text-xs text-slate-500">
-                  {new Date(f.created_at).toLocaleString("en-ZA")} · {f.author || "staff"} · {f.file_type || "file"}
+        <ul className="grid md:grid-cols-2 gap-3">
+          {files.map((f) => {
+            const name = f.name;
+            const img = isImage(name);
+            const pdf = isPDF(name);
+            return (
+              <li key={name} className="border rounded-xl p-3 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{name}</div>
+                  <div className="text-xs text-slate-500">
+                    {f.created_at ? new Date(f.created_at).toLocaleString("en-ZA") : ""}
+                  </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Button size="sm" variant="outline" onClick={() => download(f.file_path)}>Open</Button>
-                <Button size="sm" variant="destructive" onClick={() => remove(f.id, f.file_path)}>Delete</Button>
-              </div>
-            </li>
-          ))}
+                <div className="shrink-0 flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => openPreview(name)}>
+                    {img ? "Preview" : pdf ? "View PDF" : "Download"}
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => onDelete(name)}>Delete</Button>
+                </div>
+              </li>
+            );
+          })}
         </ul>
+      )}
+
+      {/* basic preview modal using native dialog */}
+      {previewUrl && (
+        <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4" onClick={() => setPreviewUrl(null)}>
+          <div className="bg-white rounded-xl max-w-4xl w-full max-h-[85vh] overflow-auto p-3" onClick={(e)=>e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="font-semibold">Preview</div>
+              <a className="text-sm underline" href={previewUrl} target="_blank" rel="noreferrer">Open in new tab</a>
+            </div>
+            {isImage(previewUrl) ? (
+              <img src={previewUrl} alt="Preview" className="max-h-[70vh] w-auto mx-auto" />
+            ) : isPDF(previewUrl) ? (
+              <iframe src={previewUrl} className="w-full h-[70vh]" />
+            ) : (
+              <div className="text-sm text-slate-600">
+                No inline preview. Use “Open in new tab” to download.
+              </div>
+            )}
+            <div className="mt-3 text-right">
+              <Button onClick={() => setPreviewUrl(null)}>Close</Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

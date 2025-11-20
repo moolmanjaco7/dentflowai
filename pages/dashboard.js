@@ -5,6 +5,13 @@ import { useEffect, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 import DayAppointments from "@/components/DayAppointments";
 import QuickActions from "@/components/QuickActions";
+import RecallsCard from "@/components/RecallsCard";
+
+// ...inside your Dashboard component JSX...
+<div className="mt-6">
+  <RecallsCard />
+</div>
+
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
