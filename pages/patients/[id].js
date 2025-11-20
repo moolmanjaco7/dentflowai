@@ -11,6 +11,9 @@ import PatientHistory from "@/components/PatientHistory";
 import InlineEditField from "@/components/InlineEditField";
 import PatientQuickAdd from "@/components/PatientQuickAdd";
 import PatientFiles from "@/components/PatientFiles";
+import PatientFilesCard from "@/components/PatientFilesCard";
+import { baseFromName } from "@/lib/patientCode";
+
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -131,6 +134,13 @@ export default function PatientDetailPage() {
               }
             }}
           />
+{/* Files & Documents */}
+<div className="mt-6">
+  <PatientFilesCard
+    patientId={patient.id}
+    patientTag={patient.patient_code || (patient.full_name ? baseFromName(patient.full_name) : "")}
+  />
+</div>
 
           <Card className="p-4">
             {/* Tabs */}
@@ -172,6 +182,10 @@ export default function PatientDetailPage() {
             {tab === "history" && <PatientHistory patientId={patient.id} />}
 
             {tab === "files" && <PatientFiles patientId={patient.id} />}
+            <div className="mt-8">
+  <PatientFiles patientId={patient.id} />
+</div>
+
           </Card>
         </section>
       </main>
