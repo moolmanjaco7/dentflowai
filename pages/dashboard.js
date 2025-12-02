@@ -98,6 +98,19 @@ export default function Dashboard() {
 
           {/* Day picker & list */}
           <DayAppointments />
+<main className="min-h-screen bg-slate-50">
+  <section className="max-w-6xl mx-auto px-4 py-8">
+    {/* your existing header / calendar */}
+    <DayAppointments />
+
+    {/* 👇 Add the recalls section */}
+    <div className="mt-6">
+      <RecallsCard />
+    </div>
+
+    {/* ...rest of your dashboard (Today’s Appointments, Patients, etc.) */}
+  </section>
+</main>
 
           {/* --- Patients panel (collapsible) --- */}
           <div className="mt-6">
