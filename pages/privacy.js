@@ -1,92 +1,102 @@
 // pages/privacy.js
-import Head from 'next/head'
-import Link from 'next/link'
+import Head from "next/head";
+import Link from "next/link";
 
-export default function Privacy() {
+export default function PrivacyPage() {
   return (
     <>
       <Head>
-        <title>DentFlow AI — Privacy Policy</title>
-        <meta name="description" content="POPIA-aligned privacy policy for DentFlow AI." />
+        <title>Privacy Policy — DentFlowAI</title>
+        <meta name="description" content="DentFlowAI Privacy Policy (POPIA-aware)" />
       </Head>
+
       <main className="min-h-screen bg-slate-50">
-        <section className="max-w-3xl mx-auto px-6 py-16">
-          <h1 className="text-3xl font-bold text-blue-800">Privacy Policy</h1>
-          <p className="mt-2 text-sm text-slate-500">Effective: {new Date().toLocaleDateString('en-ZA')}</p>
+        <section className="max-w-3xl mx-auto px-4 py-12">
+          <h1 className="text-3xl font-bold text-slate-900">Privacy Policy</h1>
+          <p className="mt-2 text-sm text-slate-500">Last updated: {new Date().toLocaleDateString("en-ZA")}</p>
 
-          <div className="mt-6 bg-white border rounded-2xl p-6 space-y-4 text-slate-700 leading-7">
+          <div className="prose prose-slate mt-6">
+            <h2>Overview</h2>
             <p>
-              This Privacy Policy explains how DentFlow AI (“we”, “us”) collects and processes personal information
-              in accordance with the Protection of Personal Information Act, 2013 (“POPIA”).
+              DentFlowAI respects your privacy. This Policy explains how we process personal information for
+              clinics and their patients in accordance with the Protection of Personal Information Act, 2013
+              (“POPIA”).
             </p>
 
-            <h2 className="text-xl font-semibold">1. Responsible Party & Contact</h2>
-            <p>
-              DentFlow AI • Email: <a href="mailto:info@dentflowai.co.za" className="underline">info@dentflowai.co.za</a>
-            </p>
-
-            <h2 className="text-xl font-semibold">2. Information We Process</h2>
-            <ul className="list-disc ml-5">
-              <li>Clinic lead details submitted via the website (clinic name, contact person, email, phone, message).</li>
-              <li>Patient and appointment details entered by clinic staff (name, contact info, appointment notes/status).</li>
-              <li>Account/authentication data for users (email, session identifiers).</li>
-              <li>Technical data (device/browser info, IP, basic analytics, error logs).</li>
+            <h2>Roles under POPIA</h2>
+            <ul>
+              <li>
+                <strong>Clinic:</strong> Responsible Party determining the purpose and means of processing.
+              </li>
+              <li>
+                <strong>DentFlowAI:</strong> Operator processing information on the Clinic’s behalf to provide
+                the Service.
+              </li>
             </ul>
 
-            <h2 className="text-xl font-semibold">3. Purpose & Legal Basis</h2>
-            <ul className="list-disc ml-5">
-              <li>To provide and improve the DentFlow service (performance of a contract / legitimate interests).</li>
-              <li>To communicate about leads, demos, and support (consent / legitimate interests).</li>
-              <li>To secure accounts and prevent abuse (legitimate interests / legal obligations).</li>
+            <h2>Information We Process</h2>
+            <ul>
+              <li>Clinic account details (name, email, phone, billing info).</li>
+              <li>Patient details submitted by the clinic (name, contact info, booking details, notes/files you upload).</li>
+              <li>Technical data (device, IP, cookies/analytics for product improvement and security).</li>
             </ul>
 
-            <h2 className="text-xl font-semibold">4. Sharing & Operators</h2>
+            <h2>How We Use Information</h2>
+            <ul>
+              <li>To provide the booking, reminders, recalls, and patient management features.</li>
+              <li>To communicate about service updates, security notices, and support.</li>
+              <li>To maintain security, prevent abuse, and improve functionality.</li>
+            </ul>
+
+            <h2>Sharing</h2>
             <p>
-              We use trusted processors to run DentFlow (e.g., hosting, database, error monitoring, email). Some processing
-              may occur outside South Africa. We require operators to implement appropriate security measures and to process
-              personal information only under our instructions.
+              We use reputable sub-processors (e.g., hosting, email delivery) under agreements with appropriate
+              safeguards. We do not sell personal information.
             </p>
 
-            <h2 className="text-xl font-semibold">5. Cross-Border Transfers</h2>
+            <h2>Security</h2>
             <p>
-              Where personal information is transferred outside South Africa, we take steps to ensure it is protected by
-              safeguards that are substantially similar to POPIA standards.
+              We implement reasonable technical and organisational measures, including access controls, encryption
+              in transit, and least-privilege principles.
             </p>
 
-            <h2 className="text-xl font-semibold">6. Security</h2>
+            <h2>Retention</h2>
             <p>
-              We apply technical and organisational measures appropriate to the risk, including access controls, encryption
-              in transit, and least-privilege practices.
+              We retain information for as long as necessary to provide the Service and comply with legal
+              obligations. Clinics may request export or deletion of their data, subject to lawful requirements.
             </p>
 
-            <h2 className="text-xl font-semibold">7. Retention</h2>
+            <h2>Your Rights</h2>
             <p>
-              We retain personal information only as long as necessary for the purposes above, or as required by law. You
-              may request deletion where applicable.
+              Under POPIA, data subjects may request access, correction, or deletion of personal information
+              (subject to exceptions). Clinics should route patient requests through their own processes. We assist
+              the Clinic as Operator where appropriate.
             </p>
 
-            <h2 className="text-xl font-semibold">8. Your Rights</h2>
+            <h2>International Transfers</h2>
             <p>
-              You may request access, correction, deletion, or objection to processing. Contact{' '}
-              <a href="mailto:info@dentflowai.co.za" className="underline">info@dentflowai.co.za</a>. We will verify your identity before acting on requests.
+              Data may be processed in data centres outside South Africa with appropriate safeguards in place.
             </p>
 
-            <h2 className="text-xl font-semibold">9. Cookies & Analytics</h2>
+            <h2>Cookies & Analytics</h2>
             <p>
-              If we enable analytics or cookies, we will update this policy and, where required, request consent.
+              We use essential cookies for authentication and optional analytics to improve the product. You can
+              manage analytics via browser settings and our cookie notice.
             </p>
 
-            <h2 className="text-xl font-semibold">10. Updates</h2>
+            <h2>Changes</h2>
             <p>
-              We may update this policy from time to time. Material changes will be posted here with a new “Effective” date.
+              We may update this Policy to reflect changes to the Service or law. We will update the “Last
+              updated” date and may notify Clinics of material changes.
             </p>
 
-            <p className="text-sm text-slate-500">
-              By using DentFlow, you agree to this Privacy Policy. For Terms, see <Link className="underline" href="/terms">Terms of Service</Link>.
+            <h2>Contact</h2>
+            <p>
+              Questions? <Link href="/contact" className="underline">Contact us</Link>.
             </p>
           </div>
         </section>
       </main>
     </>
-  )
+  );
 }

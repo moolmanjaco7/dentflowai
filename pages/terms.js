@@ -1,81 +1,92 @@
 // pages/terms.js
-import Head from 'next/head'
-import Link from 'next/link'
+import Head from "next/head";
+import Link from "next/link";
 
-export default function Terms() {
+export default function TermsPage() {
   return (
     <>
       <Head>
-        <title>DentFlow AI — Terms of Service</title>
-        <meta name="description" content="Terms of Service for using DentFlow AI." />
+        <title>Terms of Service — DentFlowAI</title>
+        <meta name="description" content="DentFlowAI Terms of Service" />
       </Head>
+
       <main className="min-h-screen bg-slate-50">
-        <section className="max-w-3xl mx-auto px-6 py-16">
-          <h1 className="text-3xl font-bold text-blue-800">Terms of Service</h1>
-          <p className="mt-2 text-sm text-slate-500">Effective: {new Date().toLocaleDateString('en-ZA')}</p>
+        <section className="max-w-3xl mx-auto px-4 py-12">
+          <h1 className="text-3xl font-bold text-slate-900">Terms of Service</h1>
+          <p className="mt-2 text-sm text-slate-500">Last updated: {new Date().toLocaleDateString("en-ZA")}</p>
 
-          <div className="mt-6 bg-white border rounded-2xl p-6 space-y-4 text-slate-700 leading-7">
-            <p>These Terms govern your use of DentFlow AI (“Service”). By using the Service, you agree to these Terms.</p>
-
-            <h2 className="text-xl font-semibold">1. The Service</h2>
+          <div className="prose prose-slate mt-6">
+            <h2>1. Agreement</h2>
             <p>
-              DentFlow provides lead capture, patient records and appointment management for clinics.
-              We may improve or modify features from time to time.
+              These Terms of Service (“Terms”) govern your access to and use of the DentFlowAI platform
+              (“Service”). By using the Service, you agree to these Terms.
             </p>
 
-            <h2 className="text-xl font-semibold">2. Accounts & Access</h2>
+            <h2>2. Eligibility</h2>
             <p>
-              You are responsible for your login credentials and for actions under your account. You agree not to
-              misuse the Service or attempt unauthorised access.
+              You must be authorised to act on behalf of your clinic or business. You are responsible for
+              ensuring compliance with all applicable laws and professional regulations.
             </p>
 
-            <h2 className="text-xl font-semibold">3. Subscription & Billing</h2>
+            <h2>3. Accounts</h2>
             <p>
-              The Starter plan is R499/month after a 7-day free trial. Month-to-month; cancel anytime to stop future
-              charges. We may change pricing with reasonable notice.
+              You are responsible for safeguarding your account credentials and for all activities under your
+              account. Notify us immediately of any unauthorised use.
             </p>
 
-            <h2 className="text-xl font-semibold">4. Acceptable Use</h2>
-            <ul className="list-disc ml-5">
-              <li>No unlawful, harmful, or abusive content.</li>
-              <li>No spamming or unauthorised bulk messaging.</li>
-              <li>Only upload data you have the right to process.</li>
+            <h2>4. Use of the Service</h2>
+            <ul>
+              <li>Do not misuse, reverse engineer, or disrupt the Service.</li>
+              <li>Do not upload unlawful, harmful, or infringing content.</li>
+              <li>You retain ownership of your data; you grant us a limited licence to operate the Service.</li>
             </ul>
 
-            <h2 className="text-xl font-semibold">5. Data Protection</h2>
+            <h2>5. Patient Data & POPIA</h2>
             <p>
-              We handle personal information in line with our <Link className="underline" href="/privacy">Privacy Policy</Link>.
-              You are responsible for your own compliance with POPIA and other laws regarding your patients and staff data.
+              You are the Responsible Party for patient personal information under POPIA. DentFlowAI acts as an
+              Operator processing data on your behalf. You must obtain any required consent from patients for
+              booking, reminders, and recalls. We implement reasonable technical and organisational measures to
+              protect personal information.
             </p>
 
-            <h2 className="text-xl font-semibold">6. Availability</h2>
+            <h2>6. Payments & Trials</h2>
             <p>
-              We aim for high availability but do not guarantee uninterrupted service. We are not liable for outages or
-              data loss beyond what is required under applicable law.
+              Paid plans are billed monthly in ZAR. Trials may be offered and can be cancelled before renewal.
+              Fees are non-refundable except where required by law.
             </p>
 
-            <h2 className="text-xl font-semibold">7. Warranties & Liability</h2>
+            <h2>7. Availability & Support</h2>
             <p>
-              The Service is provided “as is.” To the fullest extent permitted by law, we disclaim implied warranties and
-              limit liability for indirect or consequential damages.
+              We aim for high availability but do not guarantee uninterrupted service. Support is provided via
+              email/WhatsApp during business hours.
             </p>
 
-            <h2 className="text-xl font-semibold">8. Termination</h2>
+            <h2>8. Termination</h2>
             <p>
-              You may cancel at any time. We may suspend or terminate accounts that violate these Terms. Upon termination,
-              your access will cease; you may request a data export within a reasonable period.
+              You may cancel at any time. We may suspend or terminate access for breach of these Terms or to
+              prevent harm.
             </p>
 
-            <h2 className="text-xl font-semibold">9. Governing Law</h2>
-            <p>These Terms are governed by the laws of South Africa.</p>
-
-            <h2 className="text-xl font-semibold">10. Contact</h2>
+            <h2>9. Disclaimers & Liability</h2>
             <p>
-              Questions? <a href="mailto:info@dentflowai.co.za" className="underline">info@dentflowai.co.za</a>
+              The Service is provided “as is”. We exclude implied warranties to the extent permitted by law. We
+              are not liable for indirect, incidental, or consequential damages. Our aggregate liability is
+              limited to fees paid in the past 3 months.
+            </p>
+
+            <h2>10. Changes</h2>
+            <p>
+              We may update these Terms. Material changes will be notified by updating this page’s date or via
+              email.
+            </p>
+
+            <h2>11. Contact</h2>
+            <p>
+              Questions? <Link href="/contact" className="underline">Contact us</Link>.
             </p>
           </div>
         </section>
       </main>
     </>
-  )
+  );
 }
