@@ -39,10 +39,12 @@ export default function SiteHeader() {
   const LoggedInNav = () => (
     <>
       <Link href="/dashboard" className="hover:text-slate-900 transition-colors">Dashboard</Link>
+      <Link href="/reception" className="hover:text-slate-900 transition-colors">Reception</Link>
       <Link href="/patients" className="hover:text-slate-900 transition-colors">Patients</Link>
       <Link href="/pricing" className="hover:text-slate-900 transition-colors">Pricing</Link>
       <Link href="/terms" className="hover:text-slate-900 transition-colors">Terms</Link>
       <Link href="/privacy" className="hover:text-slate-900 transition-colors">Privacy</Link>
+      
       <button
         onClick={() => supabase.auth.signOut()}
         className="px-3 py-1.5 rounded-md border text-slate-700 hover:bg-slate-50 transition"
