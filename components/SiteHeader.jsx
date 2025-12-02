@@ -95,6 +95,10 @@ export default function SiteHeader() {
         <nav className="hidden md:flex items-center gap-2">
           <NavLink href="/dashboard" label="Dashboard" />
           <NavLink href="/patients" label="Patients" />
+          <Link href="/pricing" className="hover:underline">Pricing</Link>
+<Link href="/terms" className="hover:underline">Terms</Link>
+<Link href="/privacy" className="hover:underline">Privacy</Link>
+
           <NotificationBell />
           {session ? (
             <button
