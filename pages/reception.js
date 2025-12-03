@@ -104,6 +104,28 @@ export default function ReceptionPage() {
     })();
   }, [session, selectedDate, practitionerId]);
 
+  // after computing selectedDate:
+const [closed, setClosed] = useState(false);
+useEffect(() => {
+  if (!selectedDate) return;
+  (async () => {
+    const d = selectedDate.toISOString().slice(0,10);
+    const r = await fetch(`/api/public/slots?date=${d}`);
+    const j = await r.json();
+    // If ok with zero slots and weekday is outside default, it’s also "closed"
+    setClosed(Array.isArray(j.slots) && j.slots.length === 0);
+  })();
+}, [selectedDate]);
+
+// then in the heading:
+<h3 className="text-lg font-semibold">
+  {selectedDate
+    ? selectedDate.toLocaleDateString("en-ZA", { weekday:"long", year:"numeric", month:"short", day:"numeric" })
+    : "Select a day"}
+  {closed && <span className="ml-2 text-xs px-2 py-0.5 rounded-full border">Closed</span>}
+</h3>
+
+
   // Slots
   useEffect(() => {
     if (!selectedDate) return;
