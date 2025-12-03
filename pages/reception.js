@@ -26,18 +26,19 @@ export default function ReceptionPage() {
   const [monthAppts, setMonthAppts] = useState([]);
   const [dayAppts, setDayAppts] = useState([]);
 
-  const [form, setForm] = useState({ name:"", email:"", phone:"", time:"" });
+  // Added note in the form
+  const [form, setForm] = useState({ name:"", email:"", phone:"", time:"", note:"" });
   const [msg, setMsg] = useState("");
 
-  // NEW: practitioners list + selected filter
+  // Practitioners
   const [practitioners, setPractitioners] = useState([]);
-  const [practitionerId, setPractitionerId] = useState(""); // "" = all
+  const [practitionerId, setPractitionerId] = useState("");
 
-  // NEW: available slots for selected day/practitioner
+  // Slots
   const [slots, setSlots] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
 
-  // Auth gate
+  // Auth
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -49,20 +50,20 @@ export default function ReceptionPage() {
     return () => { mounted = false; };
   }, []);
 
-  // Load practitioners (active)
+  // Practitioners
   useEffect(() => {
     if (!session) return;
     (async () => {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("practitioners")
         .select("id, full_name, color_hex, active")
         .eq("active", true)
         .order("full_name");
-      if (!error) setPractitioners(data || []);
+      setPractitioners(data || []);
     })();
   }, [session]);
 
-  // Load month appointments (filtered)
+  // Month appts
   useEffect(() => {
     if (!session) return;
     (async () => {
@@ -77,18 +78,15 @@ export default function ReceptionPage() {
           .lte("starts_at", mEnd.toISOString())
           .order("starts_at", { ascending: true });
         if (practitionerId) q = q.eq("practitioner_id", practitionerId);
-        const { data, error } = await q;
-        if (error) throw error;
+        const { data } = await q;
         setMonthAppts(data || []);
-      } catch(e) {
-        console.error(e);
       } finally {
         setLoading(false);
       }
     })();
   }, [session, monthCursor, practitionerId]);
 
-  // Load selected-day appointments (filtered)
+  // Day appts
   useEffect(() => {
     if (!session || !selectedDate) return;
     (async () => {
@@ -101,12 +99,12 @@ export default function ReceptionPage() {
         .lte("starts_at", end.toISOString())
         .order("starts_at", { ascending: true });
       if (practitionerId) q = q.eq("practitioner_id", practitionerId);
-      const { data, error } = await q;
-      if (!error) setDayAppts(data || []);
+      const { data } = await q;
+      setDayAppts(data || []);
     })();
   }, [session, selectedDate, practitionerId]);
 
-  // Load free slots when date/practitioner changes
+  // Slots
   useEffect(() => {
     if (!selectedDate) return;
     let alive = true;
@@ -118,7 +116,7 @@ export default function ReceptionPage() {
         const resp = await fetch(url);
         const j = await resp.json();
         if (alive) setSlots(j.slots || []);
-      } catch (e) {
+      } catch {
         if (alive) setSlots([]);
       } finally {
         if (alive) setSlotsLoading(false);
@@ -127,7 +125,7 @@ export default function ReceptionPage() {
     return () => { alive = false; };
   }, [selectedDate, practitionerId]);
 
-  // Calendar grid (6 x 7)
+  // Calendar helpers
   const weeks = useMemo(() => {
     const first = startOfWeek(startOfMonth(monthCursor));
     const cells = [];
@@ -135,7 +133,6 @@ export default function ReceptionPage() {
     return Array.from({length:6}, (_,w)=>cells.slice(w*7,(w+1)*7));
   }, [monthCursor]);
 
-  // Count per day
   const countByDate = useMemo(() => {
     const m = new Map();
     for (const a of monthAppts) {
@@ -158,19 +155,19 @@ export default function ReceptionPage() {
         headers: { "Content-Type":"application/json" },
         body: JSON.stringify({
           date: fmtISODate(selectedDate),
-          time: form.time, // from slots dropdown
+          time: form.time,
           name: form.name,
           email: form.email,
           phone: form.phone,
           practitioner_id: practitionerId || null,
+          note: form.note || null     // <<— send the note
         }),
       });
       const j = await resp.json();
       if (!j.ok) { setMsg("❌ " + (j.error || "Could not book")); return; }
       setMsg("✅ Booked.");
-      setForm({ ...form, time: "" });
+      setForm({ name:"", email:"", phone:"", time:"", note:"" });
 
-      // Refresh lists + slots
       setMonthCursor(new Date(monthCursor));
       setSelectedDate(new Date(selectedDate));
     } catch (e) {
@@ -212,7 +209,6 @@ export default function ReceptionPage() {
                 </button>
               </div>
 
-              {/* Practitioner filter */}
               <div className="flex items-center gap-2">
                 <label className="text-sm text-slate-600">Practitioner</label>
                 <select
@@ -319,6 +315,18 @@ export default function ReceptionPage() {
                   ))}
                 </select>
               </div>
+
+              {/* NEW: Internal note */}
+              <div className="sm:col-span-2">
+                <label className="block text-xs text-slate-600">Internal note (optional)</label>
+                <textarea
+                  rows={3}
+                  className="mt-1 w-full border rounded-md px-3 py-2"
+                  placeholder="Any special info for this booking…"
+                  value={form.note}
+                  onChange={e=>setForm({...form, note:e.target.value})}
+                />
+              </div>
             </div>
 
             <button
@@ -338,11 +346,9 @@ export default function ReceptionPage() {
                   {dayAppts.map(a => {
                     const t = new Date(a.starts_at).toLocaleTimeString("en-ZA", { hour:"2-digit", minute:"2-digit" });
                     return (
-                      <div key={a.id} className="border rounded-lg p-3 flex items-center justify-between">
-                        <div>
-                          <div className="text-sm font-medium">{a.title || "Appointment"}</div>
-                          <div className="text-xs text-slate-600">{t} · {a.status}</div>
-                        </div>
+                      <div key={a.id} className="border rounded-lg p-3">
+                        <div className="text-sm font-medium">{a.title || "Appointment"}</div>
+                        <div className="text-xs text-slate-600">{t} · {a.status}</div>
                       </div>
                     );
                   })}

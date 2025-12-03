@@ -1,74 +1,104 @@
 // pages/api/public/book.js
 import { createClient } from "@supabase/supabase-js";
 
-const admin = createClient(
+const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY, // server-only!
-  { auth: { persistSession: false } }
+  process.env.SUPABASE_SERVICE_ROLE_KEY // service role to bypass RLS in server-only route
 );
 
-// Basic honeypot
-function isBot(body) {
-  return typeof body?.website === "string" && body.website.length > 0;
+// build ISO from local SA date+time
+function toStartsAtISO(dateYmd, timeHm) {
+  // dateYmd: "2025-12-03", timeHm: "14:28"
+  // SA time is UTC+02:00 (no DST). Append offset so it converts correctly to UTC.
+  return `${dateYmd}T${timeHm}:00+02:00`;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
-
-  const { date, time, name, email, phone, practitioner_id, service_id, website } = req.body || {};
-  if (isBot(req.body)) return res.status(200).json({ ok: true });
-
-  if (!date || !time || !name || !email) {
-    return res.status(400).json({ ok: false, error: "Missing fields" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
   try {
-    // 1) Find or create patient (SERVICE ROLE bypasses RLS)
-    let patientId = null;
-    const { data: existing } = await admin
-      .from("patients")
-      .select("id")
-      .ilike("email", email)
-      .limit(1)
-      .maybeSingle();
+    const {
+      date,                // "YYYY-MM-DD"
+      time,                // "HH:mm"
+      name,                // patient full name
+      email,               // optional but recommended
+      phone,               // optional
+      practitioner_id,     // nullable
+      title,               // optional appointment title
+      duration_minutes,    // optional, default 30
+      note                 // NEW: internal note saved on the appointment
+    } = req.body || {};
 
-    if (existing?.id) {
-      patientId = existing.id;
-    } else {
-      const { data: pNew, error: pErr } = await admin
+    if (!date || !time || !name) {
+      return res.status(400).json({ ok: false, error: "Missing date, time or name" });
+    }
+
+    const startsAtISO = toStartsAtISO(date, time);
+    const duration = Number(duration_minutes) > 0 ? Number(duration_minutes) : 30;
+    const endsAt = new Date(startsAtISO);
+    endsAt.setMinutes(endsAt.getMinutes() + duration);
+
+    // 1) Find or create patient (prefer email, then phone)
+    let patient = null;
+
+    if (email) {
+      const { data, error } = await supabaseAdmin
         .from("patients")
-        .insert({ full_name: name, email, phone })
-        .select("id")
+        .select("*")
+        .eq("email", email)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      patient = data || null;
+    }
+
+    if (!patient && phone) {
+      const { data, error } = await supabaseAdmin
+        .from("patients")
+        .select("*")
+        .eq("phone", phone)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      patient = data || null;
+    }
+
+    if (!patient) {
+      const { data, error } = await supabaseAdmin
+        .from("patients")
+        .insert({
+          full_name: name,
+          email: email || null,
+          phone: phone || null
+        })
+        .select("*")
         .single();
-      if (pErr) throw pErr;
-      patientId = pNew.id;
+      if (error) throw error;
+      patient = data;
     }
 
     // 2) Create appointment
-    const starts = new Date(`${date}T${time}:00`);
-    const ends = new Date(starts.getTime() + 30 * 60 * 1000);
+    const { data: appointment, error: aErr } = await supabaseAdmin
+      .from("appointments")
+      .insert({
+        title: title || "Appointment",
+        patient_id: patient.id,
+        practitioner_id: practitioner_id || null,
+        starts_at: new Date(startsAtISO).toISOString(),
+        ends_at: endsAt.toISOString(),
+        status: "booked",
+        note: note || null // <— save the internal note
+      })
+      .select("id")
+      .single();
 
-    // Avoid exact-start clash for this practitioner (if provided)
-    const q = admin.from("appointments").select("id").eq("starts_at", starts.toISOString()).limit(1);
-    if (practitioner_id) q.eq("practitioner_id", practitioner_id);
-    const { data: clash } = await q;
-    if (clash && clash.length) {
-      return res.status(409).json({ ok: false, error: "Time just got taken. Pick another slot." });
-    }
-
-    const { error: aErr } = await admin.from("appointments").insert({
-      title: "Online booking",
-      starts_at: starts.toISOString(),
-      ends_at: ends.toISOString(),
-      status: "booked",
-      patient_id: patientId,
-      practitioner_id: practitioner_id || null,
-      service_id: service_id || null,
-    });
     if (aErr) throw aErr;
 
-    return res.json({ ok: true });
+    return res.status(200).json({ ok: true, id: appointment.id });
   } catch (e) {
+    console.error(e);
     return res.status(500).json({ ok: false, error: e.message || "Server error" });
   }
 }
