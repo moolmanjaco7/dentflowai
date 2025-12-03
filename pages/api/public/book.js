@@ -1,31 +1,41 @@
 // pages/api/public/book.js
 import { createClient } from "@supabase/supabase-js";
 
-const anon = createClient(
+const admin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY, // server-only!
+  { auth: { persistSession: false } }
 );
 
-// Basic honeypot for bots
+// Basic honeypot
 function isBot(body) {
   return typeof body?.website === "string" && body.website.length > 0;
 }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed" });
-  const { date, time, name, email, phone, website } = req.body || {};
 
-  if (isBot(req.body)) return res.status(200).json({ ok: true }); // silently ignore bots
-  if (!date || !time || !name || !email) return res.status(400).json({ ok: false, error: "Missing fields" });
+  const { date, time, name, email, phone, practitioner_id, service_id, website } = req.body || {};
+  if (isBot(req.body)) return res.status(200).json({ ok: true });
+
+  if (!date || !time || !name || !email) {
+    return res.status(400).json({ ok: false, error: "Missing fields" });
+  }
 
   try {
-    // 1) Find or create patient
+    // 1) Find or create patient (SERVICE ROLE bypasses RLS)
     let patientId = null;
-    const { data: existing } = await anon.from("patients").select("id").ilike("email", email).limit(1).maybeSingle();
+    const { data: existing } = await admin
+      .from("patients")
+      .select("id")
+      .ilike("email", email)
+      .limit(1)
+      .maybeSingle();
+
     if (existing?.id) {
       patientId = existing.id;
     } else {
-      const { data: pNew, error: pErr } = await anon
+      const { data: pNew, error: pErr } = await admin
         .from("patients")
         .insert({ full_name: name, email, phone })
         .select("id")
@@ -34,27 +44,26 @@ export default async function handler(req, res) {
       patientId = pNew.id;
     }
 
-    // 2) Compute starts/ends in UTC
+    // 2) Create appointment
     const starts = new Date(`${date}T${time}:00`);
-    const ends = new Date(starts.getTime() + 30 * 60 * 1000); // 30-min default appointment
+    const ends = new Date(starts.getTime() + 30 * 60 * 1000);
 
-    // Check overlap (simple: same start time exists)
-    const { data: clash } = await anon
-      .from("appointments")
-      .select("id")
-      .eq("starts_at", starts.toISOString())
-      .limit(1);
+    // Avoid exact-start clash for this practitioner (if provided)
+    const q = admin.from("appointments").select("id").eq("starts_at", starts.toISOString()).limit(1);
+    if (practitioner_id) q.eq("practitioner_id", practitioner_id);
+    const { data: clash } = await q;
     if (clash && clash.length) {
       return res.status(409).json({ ok: false, error: "Time just got taken. Pick another slot." });
     }
 
-    // 3) Create appointment
-    const { error: aErr } = await anon.from("appointments").insert({
+    const { error: aErr } = await admin.from("appointments").insert({
       title: "Online booking",
       starts_at: starts.toISOString(),
       ends_at: ends.toISOString(),
       status: "booked",
       patient_id: patientId,
+      practitioner_id: practitioner_id || null,
+      service_id: service_id || null,
     });
     if (aErr) throw aErr;
 

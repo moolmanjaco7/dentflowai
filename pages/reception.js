@@ -33,6 +33,10 @@ export default function ReceptionPage() {
   const [practitioners, setPractitioners] = useState([]);
   const [practitionerId, setPractitionerId] = useState(""); // "" = all
 
+  // NEW: available slots for selected day/practitioner
+  const [slots, setSlots] = useState([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+
   // Auth gate
   useEffect(() => {
     let mounted = true;
@@ -58,7 +62,7 @@ export default function ReceptionPage() {
     })();
   }, [session]);
 
-  // Load month appointments (filtered by practitioner if selected)
+  // Load month appointments (filtered)
   useEffect(() => {
     if (!session) return;
     (async () => {
@@ -84,7 +88,7 @@ export default function ReceptionPage() {
     })();
   }, [session, monthCursor, practitionerId]);
 
-  // Load selected-day appointments (filtered by practitioner if selected)
+  // Load selected-day appointments (filtered)
   useEffect(() => {
     if (!session || !selectedDate) return;
     (async () => {
@@ -101,6 +105,27 @@ export default function ReceptionPage() {
       if (!error) setDayAppts(data || []);
     })();
   }, [session, selectedDate, practitionerId]);
+
+  // Load free slots when date/practitioner changes
+  useEffect(() => {
+    if (!selectedDate) return;
+    let alive = true;
+    (async () => {
+      setSlotsLoading(true);
+      try {
+        const d = fmtISODate(selectedDate);
+        const url = `/api/public/slots?date=${d}${practitionerId ? `&practitioner_id=${practitionerId}` : ""}`;
+        const resp = await fetch(url);
+        const j = await resp.json();
+        if (alive) setSlots(j.slots || []);
+      } catch (e) {
+        if (alive) setSlots([]);
+      } finally {
+        if (alive) setSlotsLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [selectedDate, practitionerId]);
 
   // Calendar grid (6 x 7)
   const weeks = useMemo(() => {
@@ -121,11 +146,10 @@ export default function ReceptionPage() {
     return m;
   }, [monthAppts]);
 
-  // Book (uses server API which bypasses RLS)
   async function book() {
     setMsg("");
     if (!form.name || !form.email || !form.time) {
-      setMsg("Please enter name, email and time.");
+      setMsg("Please enter name, email and pick a time.");
       return;
     }
     try {
@@ -134,7 +158,7 @@ export default function ReceptionPage() {
         headers: { "Content-Type":"application/json" },
         body: JSON.stringify({
           date: fmtISODate(selectedDate),
-          time: form.time,               // minute-level (e.g., 14:28)
+          time: form.time, // from slots dropdown
           name: form.name,
           email: form.email,
           phone: form.phone,
@@ -142,19 +166,19 @@ export default function ReceptionPage() {
         }),
       });
       const j = await resp.json();
-      if (!j.ok) {
-        setMsg("❌ " + (j.error || "Could not book"));
-        return;
-      }
+      if (!j.ok) { setMsg("❌ " + (j.error || "Could not book")); return; }
       setMsg("✅ Booked.");
       setForm({ ...form, time: "" });
-      // refresh lists
+
+      // Refresh lists + slots
       setMonthCursor(new Date(monthCursor));
       setSelectedDate(new Date(selectedDate));
     } catch (e) {
       setMsg("❌ " + (e.message || "Booking failed"));
     }
   }
+
+  const monthLabel = monthCursor.toLocaleString("en-ZA", { month: "long", year: "numeric" });
 
   if (loading && !session) {
     return (
@@ -163,8 +187,6 @@ export default function ReceptionPage() {
       </main>
     );
   }
-
-  const monthLabel = monthCursor.toLocaleString("en-ZA", { month: "long", year: "numeric" });
 
   return (
     <>
@@ -190,7 +212,7 @@ export default function ReceptionPage() {
                 </button>
               </div>
 
-              {/* NEW: Practitioner filter */}
+              {/* Practitioner filter */}
               <div className="flex items-center gap-2">
                 <label className="text-sm text-slate-600">Practitioner</label>
                 <select
@@ -284,14 +306,18 @@ export default function ReceptionPage() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-slate-600">Time (any minute, e.g. 14:28)</label>
-                <input
-                  type="time"
-                  step={60} // minute-level granularity
+                <label className="block text-xs text-slate-600">Time (free slots)</label>
+                <select
                   className="mt-1 w-full border rounded-md px-3 py-2"
                   value={form.time}
                   onChange={e=>setForm({...form, time:e.target.value})}
-                />
+                  disabled={slotsLoading}
+                >
+                  <option value="">{slotsLoading ? "Loading…" : "Select a time"}</option>
+                  {slots.map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
