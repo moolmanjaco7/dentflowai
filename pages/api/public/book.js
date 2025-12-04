@@ -24,7 +24,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // 0) Get a clinic owner user_id (for multi-tenant you’ll later switch to clinic slug)
+    // 0) Get a clinic owner user_id (we still use this for patients.user_id)
     const { data: clinicRow, error: clinicErr } = await supabaseAdmin
       .from("clinic_settings")
       .select("user_id")
@@ -66,7 +66,8 @@ export default async function handler(req, res) {
           full_name: full_name.trim(),
           email: email || null,
           phone: phone || null,
-          user_id: ownerId, // important if NOT NULL / RLS uses this
+          // patients.user_id DOES exist in your schema, we keep this:
+          user_id: ownerId,
         })
         .select("id")
         .maybeSingle();
@@ -106,15 +107,14 @@ export default async function handler(req, res) {
       });
     }
 
-    // 4) Insert appointment
+    // 4) Insert appointment (NOTE: no user_id here now)
     const { error: apptErr } = await supabaseAdmin.from("appointments").insert({
       title: `Online booking — ${full_name}`,
       patient_id: patientId,
       starts_at: startsAtIso,
       ends_at: endsAtIso,
       status: "booked", // matches your DB enum
-      user_id: ownerId, // important if NOT NULL / RLS uses this
-      // note: if your appointments table has extra NOT NULL columns, we’ll add them here
+      // add any other NOT NULL columns your appointments table needs here
     });
 
     if (apptErr) {
