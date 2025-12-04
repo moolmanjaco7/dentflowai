@@ -28,12 +28,17 @@ export default function SiteHeader() {
 
   const LoggedOutNav = () => (
     <>
+    <Link href="/book" className="hover:underline">
+  Book Online
+</Link>
+
       <Link href="/pricing" className="hover:text-slate-900 transition-colors">Pricing</Link>
       <Link href="/terms" className="hover:text-slate-900 transition-colors">Terms</Link>
       <Link href="/privacy" className="hover:text-slate-900 transition-colors">Privacy</Link>
       <Link href="/auth/login" className="px-3 py-1.5 rounded-md border text-slate-700 hover:bg-slate-50 transition">Log in</Link>
       <Link href="/auth/signup" className="px-3 py-1.5 rounded-md bg-slate-900 text-white hover:bg-slate-800 transition">Start Free Trial</Link>
     </>
+    
   );
 
   const LoggedInNav = () => (

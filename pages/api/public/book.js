@@ -3,102 +3,116 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY // service role to bypass RLS in server-only route
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// build ISO from local SA date+time
-function toStartsAtISO(dateYmd, timeHm) {
-  // dateYmd: "2025-12-03", timeHm: "14:28"
-  // SA time is UTC+02:00 (no DST). Append offset so it converts correctly to UTC.
-  return `${dateYmd}T${timeHm}:00+02:00`;
+function makeDateInSA(dateStr, timeStr) {
+  // dateStr = "2025-12-04", timeStr = "14:15"
+  // Treat as Africa/Johannesburg (+02:00) and return Date
+  return new Date(`${dateStr}T${timeStr}:00+02:00`);
 }
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ ok: false, error: "Method not allowed" });
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
-    const {
-      date,                // "YYYY-MM-DD"
-      time,                // "HH:mm"
-      name,                // patient full name
-      email,               // optional but recommended
-      phone,               // optional
-      practitioner_id,     // nullable
-      title,               // optional appointment title
-      duration_minutes,    // optional, default 30
-      note                 // NEW: internal note saved on the appointment
-    } = req.body || {};
+    const { full_name, email, phone, date, time, note } = req.body || {};
 
-    if (!date || !time || !name) {
-      return res.status(400).json({ ok: false, error: "Missing date, time or name" });
+    if (!full_name || !date || !time) {
+      return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const startsAtISO = toStartsAtISO(date, time);
-    const duration = Number(duration_minutes) > 0 ? Number(duration_minutes) : 30;
-    const endsAt = new Date(startsAtISO);
-    endsAt.setMinutes(endsAt.getMinutes() + duration);
+    // 1) Find or create patient
+    let patientId = null;
 
-    // 1) Find or create patient (prefer email, then phone)
-    let patient = null;
+    // Try match by phone + name (simple heuristic)
+    const { data: existing, error: existingErr } = await supabaseAdmin
+      .from("patients")
+      .select("id")
+      .ilike("full_name", full_name.trim())
+      .eq("phone", phone || null)
+      .limit(1)
+      .maybeSingle();
 
-    if (email) {
-      const { data, error } = await supabaseAdmin
-        .from("patients")
-        .select("*")
-        .eq("email", email)
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      patient = data || null;
+    if (existingErr) {
+      console.error("existing patient lookup error", existingErr);
     }
 
-    if (!patient && phone) {
-      const { data, error } = await supabaseAdmin
-        .from("patients")
-        .select("*")
-        .eq("phone", phone)
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      patient = data || null;
-    }
-
-    if (!patient) {
-      const { data, error } = await supabaseAdmin
+    if (existing?.id) {
+      patientId = existing.id;
+    } else {
+      const { data: inserted, error: insertErr } = await supabaseAdmin
         .from("patients")
         .insert({
-          full_name: name,
+          full_name: full_name.trim(),
           email: email || null,
-          phone: phone || null
+          phone: phone || null,
+          // You already have patient_code logic elsewhere; we can leave this null here.
         })
-        .select("*")
-        .single();
-      if (error) throw error;
-      patient = data;
+        .select("id")
+        .maybeSingle();
+
+      if (insertErr) {
+        console.error("patient insert error", insertErr);
+        return res
+          .status(500)
+          .json({ error: "Could not create patient, please call the clinic." });
+      }
+      patientId = inserted.id;
     }
 
-    // 2) Create appointment
-    const { data: appointment, error: aErr } = await supabaseAdmin
+    // 2) Build appointment times in UTC
+    const startLocal = makeDateInSA(date, time);
+    // Use 30-minute default duration for public bookings
+    const endLocal = new Date(startLocal.getTime() + 30 * 60 * 1000);
+
+    const startsAtIso = startLocal.toISOString();
+    const endsAtIso = endLocal.toISOString();
+
+    // Optional: simple overlap check for the same time window
+    const { data: conflicts, error: conflictErr } = await supabaseAdmin
       .from("appointments")
-      .insert({
-        title: title || "Appointment",
-        patient_id: patient.id,
-        practitioner_id: practitioner_id || null,
-        starts_at: new Date(startsAtISO).toISOString(),
-        ends_at: endsAt.toISOString(),
-        status: "booked",
-        note: note || null // <— save the internal note
-      })
       .select("id")
-      .single();
+      .lte("starts_at", endsAtIso)
+      .gte("ends_at", startsAtIso)
+      .limit(1);
 
-    if (aErr) throw aErr;
+    if (conflictErr) {
+      console.error("conflict check error", conflictErr);
+    }
 
-    return res.status(200).json({ ok: true, id: appointment.id });
+    if (conflicts && conflicts.length > 0) {
+      return res.status(409).json({
+        error:
+          "Sorry, that time was just taken. Please pick another slot.",
+      });
+    }
+
+    // 3) Insert appointment
+    const { error: apptErr } = await supabaseAdmin.from("appointments").insert({
+      title: `Online booking — ${full_name}`,
+      patient_id: patientId,
+      starts_at: startsAtIso,
+      ends_at: endsAtIso,
+      status: "booked", // matches your DB enum (booked/confirmed/…)
+      // If you have a field like source/type, you can set it here (e.g. source: 'public')
+      public_note: note || null, // only if you have this column; if not, remove
+    });
+
+    if (apptErr) {
+      console.error("appointment insert error", apptErr);
+      return res
+        .status(500)
+        .json({ error: "Could not create appointment. Please call the clinic." });
+    }
+
+    return res.status(200).json({ ok: true });
   } catch (e) {
-    console.error(e);
-    return res.status(500).json({ ok: false, error: e.message || "Server error" });
+    console.error("public booking error", e);
+    return res
+      .status(500)
+      .json({ error: e.message || "Unexpected error. Please try again." });
   }
 }
