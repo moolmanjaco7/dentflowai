@@ -44,6 +44,7 @@ export default function SiteHeader() {
       <Link href="/pricing" className="hover:text-slate-900 transition-colors">Pricing</Link>
       <Link href="/terms" className="hover:text-slate-900 transition-colors">Terms</Link>
       <Link href="/privacy" className="hover:text-slate-900 transition-colors">Privacy</Link>
+      <Link href="/settings" className="hover:underline">Settings</Link>
       
       <button
         onClick={() => supabase.auth.signOut()}
