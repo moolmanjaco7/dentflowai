@@ -24,17 +24,34 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
+    // 0) Get a clinic owner user_id (for multi-tenant you’ll later switch to clinic slug)
+    const { data: clinicRow, error: clinicErr } = await supabaseAdmin
+      .from("clinic_settings")
+      .select("user_id")
+      .limit(1)
+      .maybeSingle();
+
+    if (clinicErr) {
+      console.error("clinic_settings error", clinicErr);
+      return res.status(500).json({ error: "Clinic not configured." });
+    }
+
+    const ownerId = clinicRow?.user_id || null;
+
     // 1) Find or create patient
     let patientId = null;
 
-    // Try match by phone + name (simple heuristic)
-    const { data: existing, error: existingErr } = await supabaseAdmin
+    let patientQuery = supabaseAdmin
       .from("patients")
       .select("id")
       .ilike("full_name", full_name.trim())
-      .eq("phone", phone || null)
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+
+    if (phone) {
+      patientQuery = patientQuery.eq("phone", phone);
+    }
+
+    const { data: existing, error: existingErr } = await patientQuery.maybeSingle();
 
     if (existingErr) {
       console.error("existing patient lookup error", existingErr);
@@ -49,29 +66,29 @@ export default async function handler(req, res) {
           full_name: full_name.trim(),
           email: email || null,
           phone: phone || null,
-          // You already have patient_code logic elsewhere; we can leave this null here.
+          user_id: ownerId, // important if NOT NULL / RLS uses this
         })
         .select("id")
         .maybeSingle();
 
       if (insertErr) {
         console.error("patient insert error", insertErr);
-        return res
-          .status(500)
-          .json({ error: "Could not create patient, please call the clinic." });
+        return res.status(500).json({
+          error: insertErr.message || "Could not create patient, please call the clinic.",
+        });
       }
       patientId = inserted.id;
     }
 
     // 2) Build appointment times in UTC
     const startLocal = makeDateInSA(date, time);
-    // Use 30-minute default duration for public bookings
+    // For now: 30-minute default duration
     const endLocal = new Date(startLocal.getTime() + 30 * 60 * 1000);
 
     const startsAtIso = startLocal.toISOString();
     const endsAtIso = endLocal.toISOString();
 
-    // Optional: simple overlap check for the same time window
+    // 3) Simple overlap check for this window
     const { data: conflicts, error: conflictErr } = await supabaseAdmin
       .from("appointments")
       .select("id")
@@ -85,27 +102,26 @@ export default async function handler(req, res) {
 
     if (conflicts && conflicts.length > 0) {
       return res.status(409).json({
-        error:
-          "Sorry, that time was just taken. Please pick another slot.",
+        error: "Sorry, that time was just taken. Please pick another slot.",
       });
     }
 
-    // 3) Insert appointment
+    // 4) Insert appointment
     const { error: apptErr } = await supabaseAdmin.from("appointments").insert({
       title: `Online booking — ${full_name}`,
       patient_id: patientId,
       starts_at: startsAtIso,
       ends_at: endsAtIso,
-      status: "booked", // matches your DB enum (booked/confirmed/…)
-      // If you have a field like source/type, you can set it here (e.g. source: 'public')
-      public_note: note || null, // only if you have this column; if not, remove
+      status: "booked", // matches your DB enum
+      user_id: ownerId, // important if NOT NULL / RLS uses this
+      // note: if your appointments table has extra NOT NULL columns, we’ll add them here
     });
 
     if (apptErr) {
       console.error("appointment insert error", apptErr);
-      return res
-        .status(500)
-        .json({ error: "Could not create appointment. Please call the clinic." });
+      return res.status(500).json({
+        error: apptErr.message || "Could not create appointment. Please call the clinic.",
+      });
     }
 
     return res.status(200).json({ ok: true });
