@@ -94,15 +94,14 @@ export default async function handler(req, res) {
       });
     }
 
-    // 4) Insert appointment (no user_id, no public_note)
+    // 4) Insert appointment (NOTE: no status – let DB default handle it)
     const { error: apptErr } = await supabaseAdmin.from("appointments").insert({
       title: `Online booking — ${full_name}`,
       patient_id: patientId,
       starts_at: startsAtIso,
       ends_at: endsAtIso,
-      status: "booked", // matches your enum: booked/confirmed/etc
-      // if your appointments table has any NOT NULL extra columns,
-      // add them here with sensible defaults.
+      // status not sent – DB uses its DEFAULT + CHECK constraint
+      // add any other NOT NULL columns your appointments table needs here
     });
 
     if (apptErr) {
