@@ -24,21 +24,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // 0) Get a clinic owner user_id (we still use this for patients.user_id)
-    const { data: clinicRow, error: clinicErr } = await supabaseAdmin
-      .from("clinic_settings")
-      .select("user_id")
-      .limit(1)
-      .maybeSingle();
-
-    if (clinicErr) {
-      console.error("clinic_settings error", clinicErr);
-      return res.status(500).json({ error: "Clinic not configured." });
-    }
-
-    const ownerId = clinicRow?.user_id || null;
-
-    // 1) Find or create patient
+    // 1) Find or create patient (no user_id column needed)
     let patientId = null;
 
     let patientQuery = supabaseAdmin
@@ -66,8 +52,7 @@ export default async function handler(req, res) {
           full_name: full_name.trim(),
           email: email || null,
           phone: phone || null,
-          // patients.user_id DOES exist in your schema, we keep this:
-          user_id: ownerId,
+          // no user_id here – your table doesn't have this column
         })
         .select("id")
         .maybeSingle();
@@ -75,7 +60,9 @@ export default async function handler(req, res) {
       if (insertErr) {
         console.error("patient insert error", insertErr);
         return res.status(500).json({
-          error: insertErr.message || "Could not create patient, please call the clinic.",
+          error:
+            insertErr.message ||
+            "Could not create patient, please call the clinic.",
         });
       }
       patientId = inserted.id;
@@ -107,20 +94,23 @@ export default async function handler(req, res) {
       });
     }
 
-    // 4) Insert appointment (NOTE: no user_id here now)
+    // 4) Insert appointment (no user_id, no public_note)
     const { error: apptErr } = await supabaseAdmin.from("appointments").insert({
       title: `Online booking — ${full_name}`,
       patient_id: patientId,
       starts_at: startsAtIso,
       ends_at: endsAtIso,
-      status: "booked", // matches your DB enum
-      // add any other NOT NULL columns your appointments table needs here
+      status: "booked", // matches your enum: booked/confirmed/etc
+      // if your appointments table has any NOT NULL extra columns,
+      // add them here with sensible defaults.
     });
 
     if (apptErr) {
       console.error("appointment insert error", apptErr);
       return res.status(500).json({
-        error: apptErr.message || "Could not create appointment. Please call the clinic.",
+        error:
+          apptErr.message ||
+          "Could not create appointment. Please call the clinic.",
       });
     }
 
