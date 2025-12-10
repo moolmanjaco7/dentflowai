@@ -298,7 +298,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* FAQ */}
+            {/* FAQ */}
       <section className="bg-slate-950">
         <div className="mx-auto max-w-6xl px-4 py-12 sm:py-16">
           <div className="mb-8 max-w-xl">
@@ -319,4 +319,22 @@ export default function HomePage() {
                 <p className="text-sm font-medium text-slate-50">
                   {faq.question}
                 </p>
-                <p className="mt-2 text-xs text-slate-400"
+                <p className="mt-2 text-xs text-slate-400">
+                  {faq.answer}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-10 flex flex-col gap-3 rounded-xl border border-dashed border-slate-700 bg-slate-900/40 p-4 text-xs text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+            <p>Want help setting up your first clinic on DentFlowAI?</p>
+            <Link
+              href="/signup"
+              className="inline-flex items-center justify-center rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-xs font-medium text-slate-100 hover:border-slate-400 hover:bg-slate-800"
+            >
+              Get started today
+            </Link>
+          </div>
+        </div>
+      </section>
+
