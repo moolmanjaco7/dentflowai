@@ -1,5 +1,4 @@
 // pages/index.js
-
 import Link from "next/link";
 
 const features = [
@@ -298,7 +297,7 @@ export default function HomePage() {
         </div>
       </section>
 
-            {/* FAQ */}
+      {/* FAQ */}
       <section className="bg-slate-950">
         <div className="mx-auto max-w-6xl px-4 py-12 sm:py-16">
           <div className="mb-8 max-w-xl">
@@ -337,4 +336,6 @@ export default function HomePage() {
           </div>
         </div>
       </section>
-
+    </main>
+  );
+}
