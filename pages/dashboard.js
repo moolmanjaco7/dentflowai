@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { createClient } from "@supabase/supabase-js";
+import DashboardCalendar, {
+  CalendarAppointment,
+} from "@/components/dashboard/DashboardCalendar";
 
 const DayAppointments = dynamic(() => import("@/components/DayAppointments"), { ssr: false });
 
