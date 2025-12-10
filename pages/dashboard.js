@@ -1,109 +1,77 @@
 // pages/dashboard.js
-import Head from "next/head";
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import dynamic from "next/dynamic";
-import { createClient } from "@supabase/supabase-js";
-import DashboardCalendar, {
-  CalendarAppointment,
-} from "@/components/dashboard/DashboardCalendar";
+import DashboardCalendar from "../components/DashboardCalendar";
 
-const DayAppointments = dynamic(() => import("@/components/DayAppointments"), { ssr: false });
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
-
-export default function Dashboard() {
-  const [session, setSession] = useState(null);
+export default function DashboardPage() {
+  const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-  const [patients, setPatients] = useState([]);
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
+    async function loadAppointments() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!mounted) return;
-        if (!session) {
-          window.location.href = "/auth/login";
+        // Try main appointments API route
+        let res = await fetch("/api/appointments");
+        if (!res.ok) {
+          // Fallback to /api/appointments/list if first one doesn't exist
+          res = await fetch("/api/appointments/list");
+        }
+        if (!res.ok) {
+          console.warn("No appointment API found.");
+          setAppointments([]);
+          setLoading(false);
           return;
         }
-        setSession(session);
 
-        // Load a page of patients for the right-side list
-        const { data: pats, error: pErr } = await supabase
-          .from("patients")
-          .select("id,full_name,phone,email")
-          .order("full_name", { ascending: true })
-          .limit(50);
-        if (pErr) throw pErr;
-        setPatients(Array.isArray(pats) ? pats : []);
-      } catch (e) {
-        setErr(e.message || "Failed to load dashboard");
+        const json = await res.json();
+        const items = Array.isArray(json)
+          ? json
+          : json.data || json.appointments || [];
+
+        const mapped = items.map((a) => ({
+          id: a.id,
+          date:
+            a.appointment_date ||
+            a.date ||
+            a.appointmentDate ||
+            "2025-01-01",
+          startTime: (a.start_time || a.startTime || "09:00").slice(0, 5),
+          endTime: (a.end_time || a.endTime || "10:00").slice(0, 5),
+          patientName:
+            a.patient_full_name ||
+            a.patient_name ||
+            (a.patient && a.patient.full_name) ||
+            "Patient",
+          practitionerName:
+            a.practitioner_full_name ||
+            a.practitioner_name ||
+            (a.practitioner && a.practitioner.full_name) ||
+            "",
+          status: a.status || "",
+        }));
+
+        setAppointments(mapped);
+      } catch (err) {
+        console.error("Failed to load dashboard appointments", err);
+        setAppointments([]);
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
-    })();
-    return () => { mounted = false; };
+    }
+
+    loadAppointments();
   }, []);
 
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <p className="text-slate-600">Loading dashboard…</p>
-      </main>
-    );
-  }
-
-  if (err) {
-    return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="bg-white border rounded-2xl p-6 max-w-lg">
-          <h1 className="text-xl font-bold text-slate-900">Dashboard error</h1>
-          <p className="mt-2 text-sm text-red-600">{err}</p>
-          <p className="mt-2 text-sm text-slate-600">Try refreshing or log in again.</p>
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <>
-      <Head>
-        <title>DentFlowAI — Dashboard</title>
-      </Head>
+    <main className="min-h-screen bg-slate-950 text-slate-50 p-6">
+      <h1 className="mb-6 text-2xl font-semibold">Dashboard</h1>
 
-      <main className="min-h-screen bg-slate-50">
-        <section className="max-w-6xl mx-auto px-4 py-8">
-          {/* ONE source of truth for appointments (includes calendar + list) */}
-          <DayAppointments />
-
-          {/* Patients block */}
-          <div className="mt-10 flex items-center justify-between">
-            <h2 className="text-xl font-bold text-slate-900">Patients</h2>
-            <Link href="/patients" className="text-sm underline">Open patients</Link>
-          </div>
-          {patients.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-600">No patients yet.</p>
-          ) : (
-            <div className="mt-3 grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {patients.map(p => (
-                <Link key={p.id} href={`/patients/${p.id}`} className="bg-white border rounded-2xl p-4 hover:bg-slate-50">
-                  <div className="font-semibold">{p.full_name}</div>
-                  <div className="text-sm text-slate-600">{p.email || "—"}</div>
-                  <div className="text-sm text-slate-600">{p.phone || "—"}</div>
-                </Link>
-              ))}
-            </div>
-          )}
-
-          {/* If you render RecallsCard, it can stay below */}
-          {/* <div className="mt-8"><RecallsCard /></div> */}
-        </section>
-      </main>
-    </>
+      {loading ? (
+        <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-400">
+          Loading appointments…
+        </div>
+      ) : (
+        <DashboardCalendar appointments={appointments} />
+      )}
+    </main>
   );
 }
