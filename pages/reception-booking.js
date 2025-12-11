@@ -175,6 +175,32 @@ export default function ReceptionBookingPage() {
           "Booking created successfully."
       );
       setSubmitted(true);
+
+      
+            // Fire-and-forget booking confirmation email
+      try {
+        fetch("/api/booking/send-confirmation", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: patient.email,
+            name: patient.fullName,
+            date: appointment.date,
+            time: appointment.time,
+            clinicName: "Your clinic name", // TODO: replace with real clinic name if you have it
+            // clinicAddress: "123 Main Road, Johannesburg", // optional
+            // manageUrl: "https://your-domain.com/manage",   // optional
+          }),
+        });
+      } catch (emailErr) {
+        console.error(
+          "[DentFlowAI] Failed to trigger booking confirmation email:",
+          emailErr
+        );
+      }
+
     } catch (err) {
       console.error("Reception booking error:", err);
       setError("Unexpected error. Please try again.");
