@@ -1,385 +1,259 @@
 // pages/reception.js
-import Head from "next/head";
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+import { useEffect, useState } from "react";
 
-// ---- date helpers
-function startOfMonth(d) { const x = new Date(d); x.setDate(1); x.setHours(0,0,0,0); return x; }
-function endOfMonth(d) { const x = new Date(d); x.setMonth(x.getMonth()+1, 0); x.setHours(23,59,59,999); return x; }
-function startOfWeek(d) { const x = new Date(d); const day = (x.getDay()+6)%7; x.setDate(x.getDate()-day); x.setHours(0,0,0,0); return x; } // Monday
-function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate()+n); return x; }
-function fmtISODate(d){ return d.toISOString().slice(0,10); }
-function sameYMD(a,b){ return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+// --- Local date & time helpers (fixes the next-day bug) ---
+function toLocalDateKey(isoString) {
+  if (!isoString) return "2025-01-01";
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "2025-01-01";
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+
+  return `${year}-${month}-${day}`; // YYYY-MM-DD in LOCAL TIME
+}
+
+function toLocalTime(isoString) {
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "";
+
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// -----------------------------------------------------------
+
+// Fallback demo appointments in case API fails
+const demoAppointments = [
+  {
+    id: 1,
+    starts_at: "2025-12-10T08:30:00",
+    ends_at: "2025-12-10T09:00:00",
+    status: "confirmed",
+    notes: "Demo booking",
+  },
+  {
+    id: 2,
+    starts_at: "2025-12-10T10:00:00",
+    ends_at: "2025-12-10T10:30:00",
+    status: "confirmed",
+    notes: "Demo booking 2",
+  },
+  {
+    id: 3,
+    starts_at: "2025-12-11T09:15:00",
+    ends_at: "2025-12-11T09:45:00",
+    status: "pending",
+    notes: "Demo booking 3",
+  },
+];
+
+function mapAppointments(rawAppointments) {
+  return (rawAppointments || []).map((a) => {
+    const dateKey = toLocalDateKey(a.starts_at);
+    const startTime = toLocalTime(a.starts_at) || "09:00";
+    const endTime = toLocalTime(a.ends_at) || "";
+
+    return {
+      id: a.id,
+      dateKey,
+      startTime,
+      endTime,
+      status: a.status || "",
+      notes: a.notes || "",
+      // If later you add patient/practitioner joins, map them here:
+      patientName: a.patient_name || "Patient",
+      practitionerName: a.practitioner_name || "",
+    };
+  });
+}
 
 export default function ReceptionPage() {
-  const [session, setSession] = useState(null);
+  const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [usingDemo, setUsingDemo] = useState(false);
+  const [error, setError] = useState("");
 
-  const [monthCursor, setMonthCursor] = useState(() => new Date());
-  const [selectedDate, setSelectedDate] = useState(() => new Date());
-
-  const [monthAppts, setMonthAppts] = useState([]);
-  const [dayAppts, setDayAppts] = useState([]);
-
-  // Added note in the form
-  const [form, setForm] = useState({ name:"", email:"", phone:"", time:"", note:"" });
-  const [msg, setMsg] = useState("");
-
-  // Practitioners
-  const [practitioners, setPractitioners] = useState([]);
-  const [practitionerId, setPractitionerId] = useState("");
-
-  // Slots
-  const [slots, setSlots] = useState([]);
-  const [slotsLoading, setSlotsLoading] = useState(false);
-
-  // Auth
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!mounted) return;
-      if (!session) { window.location.href = "/auth/login"; return; }
-      setSession(session);
-    })();
-    return () => { mounted = false; };
-  }, []);
-
-  // Practitioners
-  useEffect(() => {
-    if (!session) return;
-    (async () => {
-      const { data } = await supabase
-        .from("practitioners")
-        .select("id, full_name, color_hex, active")
-        .eq("active", true)
-        .order("full_name");
-      setPractitioners(data || []);
-    })();
-  }, [session]);
-
-  // Month appts
-  useEffect(() => {
-    if (!session) return;
-    (async () => {
+    async function load() {
       setLoading(true);
+      setError("");
+      setUsingDemo(false);
+
       try {
-        const mStart = startOfMonth(monthCursor);
-        const mEnd = endOfMonth(monthCursor);
-        let q = supabase
-          .from("appointments")
-          .select("id, title, starts_at, status, practitioner_id")
-          .gte("starts_at", mStart.toISOString())
-          .lte("starts_at", mEnd.toISOString())
-          .order("starts_at", { ascending: true });
-        if (practitionerId) q = q.eq("practitioner_id", practitionerId);
-        const { data } = await q;
-        setMonthAppts(data || []);
+        const res = await fetch("/api/appointments");
+        if (!res.ok) {
+          console.warn("Reception /api/appointments status:", res.status);
+          const mappedDemo = mapAppointments(demoAppointments);
+          setAppointments(mappedDemo);
+          setUsingDemo(true);
+          setLoading(false);
+          return;
+        }
+
+        const json = await res.json();
+        console.log("Reception appointments API response:", json);
+
+        const raw =
+          (json && (json.appointments || json.data || json.rows)) || [];
+        const mapped = mapAppointments(raw);
+        setAppointments(mapped);
+      } catch (err) {
+        console.error("Reception calendar load error:", err);
+        const mappedDemo = mapAppointments(demoAppointments);
+        setAppointments(mappedDemo);
+        setUsingDemo(true);
       } finally {
         setLoading(false);
       }
-    })();
-  }, [session, monthCursor, practitionerId]);
-
-  // Day appts
-  useEffect(() => {
-    if (!session || !selectedDate) return;
-    (async () => {
-      const start = new Date(selectedDate); start.setHours(0,0,0,0);
-      const end = new Date(selectedDate);   end.setHours(23,59,59,999);
-      let q = supabase
-        .from("appointments")
-        .select("id, title, starts_at, status, practitioner_id")
-        .gte("starts_at", start.toISOString())
-        .lte("starts_at", end.toISOString())
-        .order("starts_at", { ascending: true });
-      if (practitionerId) q = q.eq("practitioner_id", practitionerId);
-      const { data } = await q;
-      setDayAppts(data || []);
-    })();
-  }, [session, selectedDate, practitionerId]);
-
-  // after computing selectedDate:
-const [closed, setClosed] = useState(false);
-useEffect(() => {
-  if (!selectedDate) return;
-  (async () => {
-    const d = selectedDate.toISOString().slice(0,10);
-    const r = await fetch(`/api/public/slots?date=${d}`);
-    const j = await r.json();
-    // If ok with zero slots and weekday is outside default, it’s also "closed"
-    setClosed(Array.isArray(j.slots) && j.slots.length === 0);
-  })();
-}, [selectedDate]);
-
-// then in the heading:
-<h3 className="text-lg font-semibold">
-  {selectedDate
-    ? selectedDate.toLocaleDateString("en-ZA", { weekday:"long", year:"numeric", month:"short", day:"numeric" })
-    : "Select a day"}
-  {closed && <span className="ml-2 text-xs px-2 py-0.5 rounded-full border">Closed</span>}
-</h3>
-
-
-  // Slots
-  useEffect(() => {
-    if (!selectedDate) return;
-    let alive = true;
-    (async () => {
-      setSlotsLoading(true);
-      try {
-        const d = fmtISODate(selectedDate);
-        const url = `/api/public/slots?date=${d}${practitionerId ? `&practitioner_id=${practitionerId}` : ""}`;
-        const resp = await fetch(url);
-        const j = await resp.json();
-        if (alive) setSlots(j.slots || []);
-      } catch {
-        if (alive) setSlots([]);
-      } finally {
-        if (alive) setSlotsLoading(false);
-      }
-    })();
-    return () => { alive = false; };
-  }, [selectedDate, practitionerId]);
-
-  // Calendar helpers
-  const weeks = useMemo(() => {
-    const first = startOfWeek(startOfMonth(monthCursor));
-    const cells = [];
-    for (let i=0;i<42;i++) cells.push(addDays(first, i));
-    return Array.from({length:6}, (_,w)=>cells.slice(w*7,(w+1)*7));
-  }, [monthCursor]);
-
-  const countByDate = useMemo(() => {
-    const m = new Map();
-    for (const a of monthAppts) {
-      const d = new Date(a.starts_at);
-      const key = fmtISODate(d);
-      m.set(key, (m.get(key)||0) + 1);
     }
-    return m;
-  }, [monthAppts]);
 
-  async function book() {
-    setMsg("");
-    if (!form.name || !form.email || !form.time) {
-      setMsg("Please enter name, email and pick a time.");
-      return;
-    }
-    try {
-      const resp = await fetch("/api/public/book", {
-        method: "POST",
-        headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({
-          date: fmtISODate(selectedDate),
-          time: form.time,
-          name: form.name,
-          email: form.email,
-          phone: form.phone,
-          practitioner_id: practitionerId || null,
-          note: form.note || null     // <<— send the note
-        }),
-      });
-      const j = await resp.json();
-      if (!j.ok) { setMsg("❌ " + (j.error || "Could not book")); return; }
-      setMsg("✅ Booked.");
-      setForm({ name:"", email:"", phone:"", time:"", note:"" });
+    load();
+  }, []);
 
-      setMonthCursor(new Date(monthCursor));
-      setSelectedDate(new Date(selectedDate));
-    } catch (e) {
-      setMsg("❌ " + (e.message || "Booking failed"));
-    }
-  }
+  // Group by dateKey
+  const grouped = appointments.reduce((acc, appt) => {
+    if (!acc[appt.dateKey]) acc[appt.dateKey] = [];
+    acc[appt.dateKey].push(appt);
+    return acc;
+  }, {});
 
-  const monthLabel = monthCursor.toLocaleString("en-ZA", { month: "long", year: "numeric" });
+  const sortedDates = Object.keys(grouped).sort();
 
-  if (loading && !session) {
-    return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <p className="text-slate-600">Loading…</p>
-      </main>
-    );
-  }
+  const todayKey = toLocalDateKey(new Date().toISOString());
 
   return (
-    <>
-      <Head><title>Reception — Calendar & Quick Book</title></Head>
-      <main className="min-h-screen bg-slate-50">
-        <section className="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* LEFT: Calendar */}
-          <div className="bg-white border rounded-2xl p-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <button
-                  className="px-3 py-1.5 rounded-md border hover:bg-slate-50"
-                  onClick={() => setMonthCursor(addDays(startOfMonth(monthCursor), -1))}
-                >
-                  ← Prev
-                </button>
-                <h2 className="text-lg font-semibold">{monthLabel}</h2>
-                <button
-                  className="px-3 py-1.5 rounded-md border hover:bg-slate-50"
-                  onClick={() => setMonthCursor(addDays(endOfMonth(monthCursor), 1))}
-                >
-                  Next →
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <label className="text-sm text-slate-600">Practitioner</label>
-                <select
-                  className="border rounded-md px-2 py-1 text-sm"
-                  value={practitionerId}
-                  onChange={e=>setPractitionerId(e.target.value)}
-                >
-                  <option value="">All</option>
-                  {practitioners.map(p => (
-                    <option key={p.id} value={p.id}>{p.full_name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-7 text-xs text-slate-500">
-              {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d => (
-                <div key={d} className="py-1 text-center">{d}</div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-7 gap-1">
-              {weeks.map((row, i) => (
-                <div key={i} className="contents">
-                  {row.map((cellDate, j) => {
-                    const inMonth = cellDate.getMonth() === monthCursor.getMonth();
-                    const isToday = sameYMD(cellDate, new Date());
-                    const isSelected = sameYMD(cellDate, selectedDate);
-                    const k = fmtISODate(cellDate);
-                    const count = countByDate.get(k) || 0;
-                    return (
-                      <button
-                        key={j}
-                        onClick={() => setSelectedDate(cellDate)}
-                        className={[
-                          "aspect-square rounded-md border px-1 py-1 text-left",
-                          inMonth ? "bg-white" : "bg-slate-50 text-slate-400",
-                          isSelected ? "ring-2 ring-slate-900" : "",
-                          isToday ? "border-slate-900" : "border-slate-200"
-                        ].join(" ")}
-                        title={`${k} — ${count} appointment${count===1?"":"s"}`}
-                      >
-                        <div className="text-xs font-medium">{cellDate.getDate()}</div>
-                        {count > 0 && (
-                          <div className="mt-1 text-[10px] inline-flex items-center gap-1 text-slate-600">
-                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-900" />
-                            <span>{count}</span>
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
+    <main className="min-h-screen bg-slate-950 text-slate-50 px-4 py-6">
+      <div className="mx-auto max-w-5xl space-y-4">
+        <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-xl font-semibold text-slate-50">
+              Reception calendar
+            </h1>
+            <p className="text-xs text-slate-400">
+              Today&apos;s and upcoming appointments in local time (no more
+              next-day shift).
+            </p>
           </div>
 
-          {/* RIGHT: Day details + quick book */}
-          <div className="bg-white border rounded-2xl p-4">
-            <h3 className="text-lg font-semibold">
-              {selectedDate
-                ? selectedDate.toLocaleDateString("en-ZA", { weekday:"long", year:"numeric", month:"short", day:"numeric" })
-                : "Select a day"}
-            </h3>
-
-            {/* Quick book */}
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-slate-600">Patient full name</label>
-                <input
-                  className="mt-1 w-full border rounded-md px-3 py-2"
-                  value={form.name}
-                  onChange={e=>setForm({...form, name:e.target.value})}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">Email</label>
-                <input
-                  type="email"
-                  className="mt-1 w-full border rounded-md px-3 py-2"
-                  value={form.email}
-                  onChange={e=>setForm({...form, email:e.target.value})}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">Phone (optional)</label>
-                <input
-                  className="mt-1 w-full border rounded-md px-3 py-2"
-                  value={form.phone}
-                  onChange={e=>setForm({...form, phone:e.target.value})}
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">Time (free slots)</label>
-                <select
-                  className="mt-1 w-full border rounded-md px-3 py-2"
-                  value={form.time}
-                  onChange={e=>setForm({...form, time:e.target.value})}
-                  disabled={slotsLoading}
-                >
-                  <option value="">{slotsLoading ? "Loading…" : "Select a time"}</option>
-                  {slots.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* NEW: Internal note */}
-              <div className="sm:col-span-2">
-                <label className="block text-xs text-slate-600">Internal note (optional)</label>
-                <textarea
-                  rows={3}
-                  className="mt-1 w-full border rounded-md px-3 py-2"
-                  placeholder="Any special info for this booking…"
-                  value={form.note}
-                  onChange={e=>setForm({...form, note:e.target.value})}
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={book}
-              className="mt-3 w-full sm:w-auto rounded-md bg-slate-900 text-white px-4 py-2 hover:bg-slate-800"
+          <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
+            <a
+              href="/reception-booking"
+              className="rounded-md border border-emerald-500/60 bg-emerald-500/10 px-3 py-1 font-medium text-emerald-200 hover:border-emerald-400"
             >
-              Book Appointment
-            </button>
-            {msg && <p className="mt-2 text-sm">{msg}</p>}
-
-            {/* Day list */}
-            <div className="mt-6">
-              {dayAppts.length === 0 ? (
-                <p className="text-sm text-slate-600">No appointments for this day.</p>
-              ) : (
-                <div className="space-y-2">
-                  {dayAppts.map(a => {
-                    const t = new Date(a.starts_at).toLocaleTimeString("en-ZA", { hour:"2-digit", minute:"2-digit" });
-                    return (
-                      <div key={a.id} className="border rounded-lg p-3">
-                        <div className="text-sm font-medium">{a.title || "Appointment"}</div>
-                        <div className="text-xs text-slate-600">{t} · {a.status}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+              + New booking
+            </a>
+            {usingDemo && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-3 py-1 text-amber-200">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                <span>Showing demo data (appointments API not responding)</span>
+              </span>
+            )}
           </div>
-        </section>
-      </main>
-    </>
+        </header>
+
+        {loading ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-400">
+            Loading reception calendar…
+          </div>
+        ) : error ? (
+          <div className="rounded-xl border border-rose-500/50 bg-rose-500/10 p-4 text-center text-[12px] text-rose-100">
+            {error}
+          </div>
+        ) : (
+          <section className="space-y-4">
+            {sortedDates.length === 0 && (
+              <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-400 text-xs">
+                No appointments found.
+              </div>
+            )}
+
+            {sortedDates.map((dateKey) => {
+              const list = grouped[dateKey] || [];
+
+              const dateObj = new Date(dateKey + "T00:00:00");
+              const label = dateObj.toLocaleDateString("en-GB", {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              });
+
+              const isToday = dateKey === todayKey;
+
+              return (
+                <div
+                  key={dateKey}
+                  className="rounded-xl border border-slate-800 bg-slate-950/70"
+                >
+                  <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="font-semibold text-slate-100">
+                        {label}
+                      </span>
+                      {isToday && (
+                        <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                          Today
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      {list.length} appointment{list.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-slate-800 text-xs">
+                    {list.map((appt) => (
+                      <div
+                        key={appt.id}
+                        className="flex items-center justify-between px-4 py-2.5"
+                      >
+                        <div className="flex flex-col">
+                          <span className="font-medium text-slate-50">
+                            {appt.startTime}
+                            {appt.endTime ? `–${appt.endTime}` : ""}
+                          </span>
+                          <span className="text-[11px] text-slate-300">
+                            {appt.patientName}
+                          </span>
+                          {appt.practitionerName && (
+                            <span className="text-[10px] text-slate-500">
+                              {appt.practitionerName}
+                            </span>
+                          )}
+                          {appt.notes && (
+                            <span className="mt-0.5 text-[10px] text-slate-500">
+                              Notes: {appt.notes}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col items-end gap-1 text-[10px]">
+                          {appt.status && (
+                            <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-slate-300">
+                              {appt.status}
+                            </span>
+                          )}
+                          {/* Placeholder for quick actions later */}
+                          <button
+                            type="button"
+                            className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-300 hover:border-slate-500"
+                          >
+                            View / edit
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+        )}
+      </div>
+    </main>
   );
 }
