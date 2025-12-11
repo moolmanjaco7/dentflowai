@@ -41,6 +41,7 @@ export default function ReceptionBookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
+  const [serverMessage, setServerMessage] = useState("");
 
   const canGoNextFromStep1 =
     patient.fullName.trim().length > 2 && patient.phone.trim().length >= 5;
@@ -48,24 +49,87 @@ export default function ReceptionBookingPage() {
   const canGoNextFromStep2 =
     appointment.date && appointment.time && appointment.practitionerId;
 
+  function computeDateTimes() {
+    if (!appointment.date || !appointment.time) return { startsAt: null, endsAt: null };
+
+    const [hours, minutes] = appointment.time.split(":").map((n) => parseInt(n || "0", 10));
+    const d = new Date(appointment.date);
+    d.setHours(hours, minutes, 0, 0);
+
+    const startsAt = new Date(d);
+    const durationMinutes = parseInt(appointment.duration || "30", 10);
+    const endsAt = new Date(startsAt.getTime() + durationMinutes * 60000);
+
+    return { startsAt, endsAt };
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
+    setServerMessage("");
     setSubmitting(true);
+    setSubmitted(false);
 
     try {
-      // 🔧 DEMO ONLY – currently just logs to console.
-      // In the next step we’ll wire this to your real API/Supabase.
-      console.log("Reception booking payload:", {
-        patient,
-        appointment,
+      const { startsAt, endsAt } = computeDateTimes();
+
+      if (!startsAt || !endsAt) {
+        setError("Please select a valid date and time.");
+        setSubmitting(false);
+        return;
+      }
+
+      // Build payload for existing backend route /api/booking/create
+      const payload = {
+        patient: {
+          full_name: patient.fullName,
+          email: patient.email || null,
+          phone: patient.phone,
+          notes: patient.notes || null,
+        },
+        appointment: {
+          starts_at: startsAt.toISOString(),
+          ends_at: endsAt.toISOString(),
+          practitioner_id: appointment.practitionerId || null,
+          reason: appointment.reason || null,
+          notes: patient.notes || null,
+        },
+      };
+
+      const res = await fetch("/api/booking/create", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       });
 
-      await new Promise((r) => setTimeout(r, 700)); // fake delay
+      let json = null;
+      try {
+        json = await res.json();
+      } catch (_) {
+        // ignore JSON parse errors, we'll handle by status
+      }
+
+      if (!res.ok) {
+        console.error("Booking create failed:", res.status, json);
+        setError(
+          (json && (json.error || json.message)) ||
+            "Could not create appointment. Please try again."
+        );
+        setSubmitting(false);
+        return;
+      }
+
+      console.log("Reception booking created:", json);
+      setServerMessage(
+        (json && (json.message || json.status)) ||
+          "Booking created successfully."
+      );
       setSubmitted(true);
     } catch (err) {
-      console.error(err);
-      setError("Could not create appointment. Please try again.");
+      console.error("Reception booking error:", err);
+      setError("Unexpected error. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -88,6 +152,7 @@ export default function ReceptionBookingPage() {
     setStep(1);
     setSubmitted(false);
     setError("");
+    setServerMessage("");
   }
 
   const selectedPractitioner =
@@ -317,8 +382,8 @@ export default function ReceptionBookingPage() {
                     </p>
                     <p className="mt-1 text-slate-50">
                       {appointment.date || "Not set"} •{" "}
-                      {appointment.time || "Not set"} (
-                      {appointment.duration} min)
+                      {appointment.time || "Not set"} ({appointment.duration}{" "}
+                      min)
                     </p>
                     {selectedPractitioner && (
                       <p className="text-slate-400">
@@ -333,9 +398,8 @@ export default function ReceptionBookingPage() {
                   </div>
 
                   <p className="text-[11px] text-slate-500">
-                    Please confirm these details with the patient before
-                    saving. In the next step, this screen will be wired to your
-                    live DentFlowAI appointments database.
+                    This booking will be created via your existing DentFlowAI
+                    booking API and will appear in your appointments table.
                   </p>
                 </div>
 
@@ -345,8 +409,7 @@ export default function ReceptionBookingPage() {
 
                 {submitted && (
                   <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
-                    Booking captured (demo). In the next step this will write
-                    to your live appointments and trigger confirmations.
+                    {serverMessage || "Booking created successfully."}
                   </div>
                 )}
               </section>
@@ -402,7 +465,7 @@ export default function ReceptionBookingPage() {
                     disabled={submitting}
                     className="rounded-md bg-emerald-500 px-3 py-1.5 text-[11px] font-semibold text-slate-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
                   >
-                    {submitting ? "Saving…" : "Confirm booking (demo)"}
+                    {submitting ? "Saving…" : "Confirm booking"}
                   </button>
                 )}
               </div>
@@ -428,17 +491,13 @@ export default function ReceptionBookingPage() {
           </ul>
           <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/70 p-3 text-[11px]">
             <p className="font-medium text-slate-100">
-              Next integration step
+              Linked to booking backend
             </p>
             <p className="mt-1 text-slate-400">
-              We&apos;ll connect this flow to your actual DentFlowAI
-              appointments table so every reception booking:
+              This flow now posts to <code>/api/booking/create</code>, using
+              your existing booking logic. Any extra validation or email
+              confirmations you&apos;ve set up there will continue to work.
             </p>
-            <ul className="mt-1 list-inside list-disc space-y-1">
-              <li>Shows in the dashboard calendar</li>
-              <li>Triggers email confirmations</li>
-              <li>Keeps patient records in sync</li>
-            </ul>
           </div>
         </aside>
       </div>
