@@ -2,8 +2,39 @@
 import { useEffect, useState } from "react";
 import DashboardCalendar from "../components/DashboardCalendar";
 
+// Fallback demo appointments (for when API is not working)
+const demoAppointments = [
+  {
+    id: 1,
+    date: "2025-12-10",
+    startTime: "08:30",
+    endTime: "09:00",
+    patientName: "Demo Patient 1",
+    practitionerName: "Dr Naidoo",
+    status: "confirmed",
+  },
+  {
+    id: 2,
+    date: "2025-12-10",
+    startTime: "10:00",
+    endTime: "10:30",
+    patientName: "Demo Patient 2",
+    practitionerName: "Dr Smith",
+    status: "confirmed",
+  },
+  {
+    id: 3,
+    date: "2025-12-11",
+    startTime: "09:15",
+    endTime: "09:45",
+    patientName: "Demo Patient 3",
+    practitionerName: "Dr Patel",
+    status: "pending",
+  },
+];
+
 function mapAppointmentsToCalendar(rawAppointments) {
-  // Convert Supabase rows -> calendar format, using LOCAL time
+  // Convert Supabase rows -> calendar format, using LOCAL time (no UTC date shift)
   return (rawAppointments || []).map((a) => {
     const starts = a.starts_at ? new Date(a.starts_at) : null;
     const ends = a.ends_at ? new Date(a.ends_at) : null;
@@ -42,19 +73,20 @@ function mapAppointmentsToCalendar(rawAppointments) {
 export default function DashboardPage() {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [usingDemo, setUsingDemo] = useState(false);
 
   useEffect(() => {
     async function loadAppointments() {
       setLoading(true);
-      setError("");
+      setUsingDemo(false);
 
       try {
         const res = await fetch("/api/appointments");
         if (!res.ok) {
           console.warn("Appointments API returned", res.status);
-          setError("Could not load appointments.");
-          setAppointments([]);
+          // Fallback to demo appointments
+          setAppointments(demoAppointments);
+          setUsingDemo(true);
           setLoading(false);
           return;
         }
@@ -69,8 +101,9 @@ export default function DashboardPage() {
         setAppointments(mapped);
       } catch (err) {
         console.error("Failed to load dashboard appointments", err);
-        setError("Unexpected error while loading appointments.");
-        setAppointments([]);
+        // Fallback to demo appointments on any error
+        setAppointments(demoAppointments);
+        setUsingDemo(true);
       } finally {
         setLoading(false);
       }
@@ -88,27 +121,25 @@ export default function DashboardPage() {
             Month/week calendar of all upcoming appointments.
           </p>
         </div>
-        <div className="flex gap-2 text-[11px] text-slate-400">
+        <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
           <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900 px-3 py-1">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             <span>Reception & online bookings included</span>
           </span>
+          {usingDemo && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-3 py-1 text-amber-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+              <span>Showing demo calendar (API not responding)</span>
+            </span>
+          )}
         </div>
       </header>
 
-      {loading && (
+      {loading ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-400">
           Loading appointments…
         </div>
-      )}
-
-      {!loading && error && (
-        <div className="rounded-xl border border-rose-500/50 bg-rose-500/10 p-4 text-center text-[12px] text-rose-100">
-          {error}
-        </div>
-      )}
-
-      {!loading && !error && (
+      ) : (
         <DashboardCalendar appointments={appointments} />
       )}
     </main>
