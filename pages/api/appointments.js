@@ -33,7 +33,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { data, error } = await supabaseAdmin
+    // 1) Get appointments
+    const { data: appts, error: apptError } = await supabaseAdmin
       .from("appointments")
       .select(
         `
@@ -49,12 +50,49 @@ export default async function handler(req, res) {
       .order("starts_at", { ascending: true })
       .limit(500);
 
-    if (error) {
-      console.error("Supabase appointments error:", error);
-      return res.status(500).json({ error: error.message });
+    if (apptError) {
+      console.error("Supabase appointments error:", apptError);
+      return res.status(500).json({ error: apptError.message });
     }
 
-    return res.status(200).json({ appointments: data || [] });
+    const appointments = appts || [];
+
+    // 2) Collect unique patient IDs
+    const patientIds = Array.from(
+      new Set(
+        appointments
+          .map((a) => a.patient_id)
+          .filter((id) => id !== null && id !== undefined)
+      )
+    );
+
+    let patientMap = {};
+
+    if (patientIds.length > 0) {
+      // 3) Fetch patients
+      const { data: patients, error: patientError } = await supabaseAdmin
+        .from("patients")
+        .select("id, full_name");
+
+      if (patientError) {
+        console.error("Supabase patients error:", patientError);
+        // We still return appointments, just without names
+      } else {
+        patientMap = (patients || []).reduce((acc, p) => {
+          acc[p.id] = p.full_name || null;
+          return acc;
+        }, {});
+      }
+    }
+
+    // 4) Attach patient_name to each appointment
+    const normalized = appointments.map((a) => ({
+      ...a,
+      patient_name:
+        (a.patient_id && patientMap[a.patient_id]) || null,
+    }));
+
+    return res.status(200).json({ appointments: normalized });
   } catch (err) {
     console.error("Appointments API error:", err);
     return res.status(500).json({ error: "Unexpected error" });
