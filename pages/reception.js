@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-// --- Local date & time helpers (fixes the next-day bug) ---
 function toLocalDateKey(isoString) {
   if (!isoString) return "2025-01-01";
   const d = new Date(isoString);
@@ -13,43 +12,16 @@ function toLocalDateKey(isoString) {
   const month = pad(d.getMonth() + 1);
   const day = pad(d.getDate());
 
-  return `${year}-${month}-${day}`; // YYYY-MM-DD in LOCAL TIME
+  return `${year}-${month}-${day}`;
 }
 
 function toLocalTime(isoString) {
   if (!isoString) return "";
   const d = new Date(isoString);
   if (isNaN(d.getTime())) return "";
-
   const pad = (n) => String(n).padStart(2, "0");
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-// -----------------------------------------------------------
-
-// Fallback demo appointments in case API fails
-const demoAppointments = [
-  {
-    id: 1,
-    starts_at: "2025-12-10T08:30:00",
-    ends_at: "2025-12-10T09:00:00",
-    status: "confirmed",
-    notes: "Demo booking",
-  },
-  {
-    id: 2,
-    starts_at: "2025-12-10T10:00:00",
-    ends_at: "2025-12-10T10:30:00",
-    status: "confirmed",
-    notes: "Demo booking 2",
-  },
-  {
-    id: 3,
-    starts_at: "2025-12-11T09:15:00",
-    ends_at: "2025-12-11T09:45:00",
-    status: "pending",
-    notes: "Demo booking 3",
-  },
-];
 
 function mapAppointments(rawAppointments) {
   return (rawAppointments || []).map((a) => {
@@ -64,7 +36,6 @@ function mapAppointments(rawAppointments) {
       endTime,
       status: a.status || "",
       notes: a.notes || "",
-      // If later you add patient/practitioner joins, map them here:
       patientName: a.patient_name || "Patient",
       practitionerName: a.practitioner_name || "",
     };
@@ -74,22 +45,19 @@ function mapAppointments(rawAppointments) {
 export default function ReceptionPage() {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [usingDemo, setUsingDemo] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     async function load() {
       setLoading(true);
       setError("");
-      setUsingDemo(false);
 
       try {
         const res = await fetch("/api/appointments");
         if (!res.ok) {
           console.warn("Reception /api/appointments status:", res.status);
-          const mappedDemo = mapAppointments(demoAppointments);
-          setAppointments(mappedDemo);
-          setUsingDemo(true);
+          setError("Could not load appointments.");
+          setAppointments([]);
           setLoading(false);
           return;
         }
@@ -103,9 +71,8 @@ export default function ReceptionPage() {
         setAppointments(mapped);
       } catch (err) {
         console.error("Reception calendar load error:", err);
-        const mappedDemo = mapAppointments(demoAppointments);
-        setAppointments(mappedDemo);
-        setUsingDemo(true);
+        setError("Unexpected error while loading appointments.");
+        setAppointments([]);
       } finally {
         setLoading(false);
       }
@@ -114,7 +81,6 @@ export default function ReceptionPage() {
     load();
   }, []);
 
-  // Group by dateKey
   const grouped = appointments.reduce((acc, appt) => {
     if (!acc[appt.dateKey]) acc[appt.dateKey] = [];
     acc[appt.dateKey].push(appt);
@@ -122,7 +88,6 @@ export default function ReceptionPage() {
   }, {});
 
   const sortedDates = Object.keys(grouped).sort();
-
   const todayKey = toLocalDateKey(new Date().toISOString());
 
   return (
@@ -134,8 +99,7 @@ export default function ReceptionPage() {
               Reception calendar
             </h1>
             <p className="text-xs text-slate-400">
-              Today&apos;s and upcoming appointments in local time (no more
-              next-day shift).
+              Appointments grouped by day, using local time.
             </p>
           </div>
 
@@ -146,12 +110,6 @@ export default function ReceptionPage() {
             >
               + New booking
             </a>
-            {usingDemo && (
-              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/60 bg-amber-500/10 px-3 py-1 text-amber-200">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                <span>Showing demo data (appointments API not responding)</span>
-              </span>
-            )}
           </div>
         </header>
 
@@ -163,14 +121,12 @@ export default function ReceptionPage() {
           <div className="rounded-xl border border-rose-500/50 bg-rose-500/10 p-4 text-center text-[12px] text-rose-100">
             {error}
           </div>
+        ) : sortedDates.length === 0 ? (
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-xs text-slate-400">
+            No appointments found.
+          </div>
         ) : (
           <section className="space-y-4">
-            {sortedDates.length === 0 && (
-              <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-center text-slate-400 text-xs">
-                No appointments found.
-              </div>
-            )}
-
             {sortedDates.map((dateKey) => {
               const list = grouped[dateKey] || [];
 
@@ -237,7 +193,6 @@ export default function ReceptionPage() {
                               {appt.status}
                             </span>
                           )}
-                          {/* Placeholder for quick actions later */}
                           <button
                             type="button"
                             className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[10px] text-slate-300 hover:border-slate-500"
