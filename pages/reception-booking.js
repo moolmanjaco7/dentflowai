@@ -2,6 +2,40 @@
 
 import { useState } from "react";
 
+function classNames(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function StepPill({ active, done, children }) {
+  return (
+    <div
+      className={classNames(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1",
+        active
+          ? "bg-blue-500 text-slate-50"
+          : done
+          ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40"
+          : "bg-slate-900 text-slate-400 border border-slate-700"
+      )}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      <span>{children}</span>
+    </div>
+  );
+}
+
+function Field({ label, required, children }) {
+  return (
+    <label className="block text-[11px]">
+      <span className="mb-1 inline-flex items-center gap-1 text-slate-300">
+        {label}
+        {required && <span className="text-rose-400">*</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
 const practitionersDemo = [
   { id: 1, name: "Dr Naidoo" },
   { id: 2, name: "Dr Smith" },
@@ -15,10 +49,6 @@ const reasonsDemo = [
   "Whitening consult",
   "Emergency / pain",
 ];
-
-function classNames(...classes) {
-  return classes.filter(Boolean).join(" ");
-}
 
 export default function ReceptionBookingPage() {
   const [step, setStep] = useState(1);
@@ -43,16 +73,24 @@ export default function ReceptionBookingPage() {
   const [error, setError] = useState("");
   const [serverMessage, setServerMessage] = useState("");
 
+  // Email now required to satisfy backend ("Missing name, email, date, or time")
   const canGoNextFromStep1 =
-    patient.fullName.trim().length > 2 && patient.phone.trim().length >= 5;
+    patient.fullName.trim().length > 2 &&
+    patient.phone.trim().length >= 5 &&
+    patient.email.trim().length > 3;
 
   const canGoNextFromStep2 =
     appointment.date && appointment.time && appointment.practitionerId;
 
   function computeDateTimes() {
-    if (!appointment.date || !appointment.time) return { startsAt: null, endsAt: null };
+    if (!appointment.date || !appointment.time) {
+      return { startsAt: null, endsAt: null };
+    }
 
-    const [hours, minutes] = appointment.time.split(":").map((n) => parseInt(n || "0", 10));
+    const parts = appointment.time.split(":");
+    const hours = parseInt(parts[0] || "0", 10);
+    const minutes = parseInt(parts[1] || "0", 10);
+
     const d = new Date(appointment.date);
     d.setHours(hours, minutes, 0, 0);
 
@@ -71,6 +109,12 @@ export default function ReceptionBookingPage() {
     setSubmitted(false);
 
     try {
+      if (!patient.fullName || !patient.email || !appointment.date || !appointment.time) {
+        setError("Name, email, date and time are required.");
+        setSubmitting(false);
+        return;
+      }
+
       const { startsAt, endsAt } = computeDateTimes();
 
       if (!startsAt || !endsAt) {
@@ -79,22 +123,26 @@ export default function ReceptionBookingPage() {
         return;
       }
 
-      // Build payload for existing backend route /api/booking/create
+      // Flat payload to match /api/booking/create expectations
       const payload = {
-        patient: {
-          full_name: patient.fullName,
-          email: patient.email || null,
-          phone: patient.phone,
-          notes: patient.notes || null,
-        },
-        appointment: {
-          starts_at: startsAt.toISOString(),
-          ends_at: endsAt.toISOString(),
-          practitioner_id: appointment.practitionerId || null,
-          reason: appointment.reason || null,
-          notes: patient.notes || null,
-        },
+        name: patient.fullName,
+        email: patient.email,
+        phone: patient.phone,
+        date: appointment.date,
+        time: appointment.time,
+        duration: appointment.duration,
+        practitionerId: appointment.practitionerId || null,
+        reason: appointment.reason || null,
+        notes: patient.notes || null,
+        // Extra timestamps if your backend uses them:
+        starts_at: startsAt.toISOString(),
+        ends_at: endsAt.toISOString(),
       };
+
+      console.log(
+        "Sending reception booking payload to /api/booking/create:",
+        payload
+      );
 
       const res = await fetch("/api/booking/create", {
         method: "POST",
@@ -107,8 +155,8 @@ export default function ReceptionBookingPage() {
       let json = null;
       try {
         json = await res.json();
-      } catch (_) {
-        // ignore JSON parse errors, we'll handle by status
+      } catch (_err) {
+        // ignore JSON parse errors; we'll trust status code
       }
 
       if (!res.ok) {
@@ -176,7 +224,7 @@ export default function ReceptionBookingPage() {
             </div>
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Live booking mode
+              <span>Live booking mode</span>
             </span>
           </header>
 
@@ -206,7 +254,7 @@ export default function ReceptionBookingPage() {
                   <Field label="Full name" required>
                     <input
                       type="text"
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       placeholder="e.g. John Smith"
                       value={patient.fullName}
                       onChange={(e) =>
@@ -220,7 +268,7 @@ export default function ReceptionBookingPage() {
                   <Field label="Mobile / WhatsApp" required>
                     <input
                       type="tel"
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       placeholder="e.g. 082 123 4567"
                       value={patient.phone}
                       onChange={(e) =>
@@ -231,10 +279,10 @@ export default function ReceptionBookingPage() {
                       }
                     />
                   </Field>
-                  <Field label="Email (optional)">
+                  <Field label="Email" required>
                     <input
                       type="email"
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       placeholder="For confirmations & reminders"
                       value={patient.email}
                       onChange={(e) =>
@@ -248,7 +296,7 @@ export default function ReceptionBookingPage() {
                   <Field label="Reception notes (optional)">
                     <input
                       type="text"
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       placeholder="e.g. nervous patient, prefers mornings"
                       value={patient.notes}
                       onChange={(e) =>
@@ -272,7 +320,7 @@ export default function ReceptionBookingPage() {
                   <Field label="Date" required>
                     <input
                       type="date"
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       value={appointment.date}
                       onChange={(e) =>
                         setAppointment((a) => ({
@@ -285,7 +333,7 @@ export default function ReceptionBookingPage() {
                   <Field label="Time" required>
                     <input
                       type="time"
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       value={appointment.time}
                       onChange={(e) =>
                         setAppointment((a) => ({
@@ -297,7 +345,7 @@ export default function ReceptionBookingPage() {
                   </Field>
                   <Field label="Duration">
                     <select
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       value={appointment.duration}
                       onChange={(e) =>
                         setAppointment((a) => ({
@@ -314,7 +362,7 @@ export default function ReceptionBookingPage() {
                   </Field>
                   <Field label="Practitioner" required>
                     <select
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       value={appointment.practitionerId}
                       onChange={(e) =>
                         setAppointment((a) => ({
@@ -333,7 +381,7 @@ export default function ReceptionBookingPage() {
                   </Field>
                   <Field label="Reason (optional)">
                     <select
-                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none ring-0 focus:border-slate-400"
+                      className="w-full rounded-md border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-50 outline-none focus:border-slate-400"
                       value={appointment.reason}
                       onChange={(e) =>
                         setAppointment((a) => ({
@@ -494,7 +542,7 @@ export default function ReceptionBookingPage() {
               Linked to booking backend
             </p>
             <p className="mt-1 text-slate-400">
-              This flow now posts to <code>/api/booking/create</code>, using
+              This flow posts to <code>/api/booking/create</code>, using
               your existing booking logic. Any extra validation or email
               confirmations you&apos;ve set up there will continue to work.
             </p>
@@ -502,35 +550,5 @@ export default function ReceptionBookingPage() {
         </aside>
       </div>
     </main>
-  );
-}
-
-function StepPill({ active, done, children }) {
-  return (
-    <div
-      className={classNames(
-        "inline-flex items-center gap-1 rounded-full px-2.5 py-1",
-        active
-          ? "bg-blue-500 text-slate-50"
-          : done
-          ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40"
-          : "bg-slate-900 text-slate-400 border border-slate-700"
-      )}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      <span>{children}</span>
-    </div>
-  );
-}
-
-function Field({ label, required, children }) {
-  return (
-    <label className="block text-[11px]">
-      <span className="mb-1 inline-flex items-center gap-1 text-slate-300">
-        {label}
-        {required && <span className="text-rose-400">*</span>}
-      </span>
-      {children}
-    </label>
   );
 }
