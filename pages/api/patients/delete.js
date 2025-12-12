@@ -17,10 +17,10 @@ export default async function handler(req, res) {
   if (!supabaseAdmin) return res.status(500).json({ error: "Supabase admin client not configured" });
 
   try {
-    const { patientId } = req.body || {};
+    const { patientId, force } = req.body || {};
     if (!patientId) return res.status(400).json({ error: "Missing patientId" });
 
-    // Optional safety: block delete if patient has appointments
+    // Count appointments
     const { count, error: countErr } = await supabaseAdmin
       .from("appointments")
       .select("id", { count: "exact", head: true })
@@ -31,16 +31,38 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "Failed to validate patient appointments" });
     }
 
-    if ((count || 0) > 0) {
+    const apptCount = count || 0;
+
+    // If appointments exist and not forcing, block delete
+    if (apptCount > 0 && !force) {
       return res.status(409).json({
-        error: "This patient has appointments and cannot be deleted. Cancel/delete appointments first.",
+        error: `This patient has ${apptCount} appointment(s). Tick "Delete appointments too" to delete anyway.`,
+        appointmentCount: apptCount,
       });
     }
 
-    const { error } = await supabaseAdmin.from("patients").delete().eq("id", patientId);
-    if (error) {
-      console.error("Delete patient error:", error);
-      return res.status(500).json({ error: error.message });
+    // If forcing, delete appointments first
+    if (apptCount > 0 && force) {
+      const { error: delApptsErr } = await supabaseAdmin
+        .from("appointments")
+        .delete()
+        .eq("patient_id", patientId);
+
+      if (delApptsErr) {
+        console.error("Delete appointments error:", delApptsErr);
+        return res.status(500).json({ error: "Failed to delete appointments for this patient." });
+      }
+    }
+
+    // Delete patient
+    const { error: delPatientErr } = await supabaseAdmin
+      .from("patients")
+      .delete()
+      .eq("id", patientId);
+
+    if (delPatientErr) {
+      console.error("Delete patient error:", delPatientErr);
+      return res.status(500).json({ error: delPatientErr.message });
     }
 
     return res.status(200).json({ ok: true });
