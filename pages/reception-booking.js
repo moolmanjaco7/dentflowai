@@ -6,18 +6,80 @@ function fmtDateInput(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function parseISOToLocalTimeLabel(iso) {
+function safeTimeLabel(isoOrDateStr) {
   try {
-    const dt = new Date(iso);
+    const dt = new Date(isoOrDateStr);
+    if (Number.isNaN(dt.getTime())) return String(isoOrDateStr || "");
     return dt.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
   } catch {
-    return iso;
+    return String(isoOrDateStr || "");
   }
+}
+
+function buildLocalISO(dateStr, timeStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [hh, mm] = timeStr.split(":").map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0);
+  return dt.toISOString();
+}
+
+function normalizeSlots(rawSlots, dateStr) {
+  const arr = Array.isArray(rawSlots) ? rawSlots : [];
+
+  const normalized = arr
+    .map((s) => {
+      if (typeof s === "string") {
+        const starts_at = buildLocalISO(dateStr, s);
+        const dt = new Date(starts_at);
+        dt.setMinutes(dt.getMinutes() + 30);
+        return { starts_at, ends_at: dt.toISOString() };
+      }
+
+      const starts =
+        s?.starts_at ||
+        s?.start ||
+        s?.start_time ||
+        s?.startsAt ||
+        s?.from ||
+        s?.begin;
+
+      const ends =
+        s?.ends_at ||
+        s?.end ||
+        s?.end_time ||
+        s?.endsAt ||
+        s?.to ||
+        s?.finish;
+
+      const starts_at =
+        typeof starts === "string" && /^\d{1,2}:\d{2}$/.test(starts)
+          ? buildLocalISO(dateStr, starts)
+          : starts;
+
+      const ends_at =
+        typeof ends === "string" && /^\d{1,2}:\d{2}$/.test(ends)
+          ? buildLocalISO(dateStr, ends)
+          : ends;
+
+      return { ...s, starts_at, ends_at };
+    })
+    .filter((s) => {
+      const a = new Date(s?.starts_at);
+      const b = new Date(s?.ends_at);
+      return (
+        s?.starts_at &&
+        s?.ends_at &&
+        !Number.isNaN(a.getTime()) &&
+        !Number.isNaN(b.getTime())
+      );
+    });
+
+  return normalized;
 }
 
 export default function ReceptionBookingPage() {
   const defaultClinicId = process.env.NEXT_PUBLIC_DEFAULT_CLINIC_ID || "";
-  const [clinic_id, setClinicId] = useState(defaultClinicId);
+  const [clinic_id] = useState(defaultClinicId);
 
   const [date, setDate] = useState(fmtDateInput(new Date()));
   const [loadingSlots, setLoadingSlots] = useState(false);
@@ -29,7 +91,6 @@ export default function ReceptionBookingPage() {
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
 
-  // ✅ WhatsApp opt-in ON by default
   const [whatsappOptIn, setWhatsappOptIn] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
@@ -41,15 +102,16 @@ export default function ReceptionBookingPage() {
 
     if (!clinic_id) {
       setSlots([]);
-      setToast("Missing clinic_id. Set NEXT_PUBLIC_DEFAULT_CLINIC_ID in Vercel env vars.");
+      setToast("Clinic ID missing. Set NEXT_PUBLIC_DEFAULT_CLINIC_ID in Vercel.");
       return;
     }
 
     setLoadingSlots(true);
     try {
-      const res = await fetch(`/api/booking/slots?clinic_id=${encodeURIComponent(clinic_id)}&date=${encodeURIComponent(date)}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/booking/slots?clinic_id=${encodeURIComponent(clinic_id)}&date=${encodeURIComponent(date)}`,
+        { cache: "no-store" }
+      );
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -58,8 +120,14 @@ export default function ReceptionBookingPage() {
         return;
       }
 
-      const json = await res.json();
-      setSlots(json?.slots || []);
+      const json = await res.json().catch(() => ({}));
+      const raw = json?.slots || [];
+      const normalized = normalizeSlots(raw, date);
+      setSlots(normalized);
+
+      if (normalized.length === 0) {
+        setToast("No valid slots returned (slot format mismatch). UI now normalizes most formats — if still empty, we’ll adjust the slots API.");
+      }
     } catch (e) {
       console.error(e);
       setSlots([]);
@@ -77,7 +145,7 @@ export default function ReceptionBookingPage() {
   const slotGroups = useMemo(() => {
     const groups = {};
     for (const s of slots) {
-      const label = parseISOToLocalTimeLabel(s.starts_at);
+      const label = safeTimeLabel(s.starts_at);
       const hour = label.slice(0, 2);
       if (!groups[hour]) groups[hour] = [];
       groups[hour].push({ ...s, label });
@@ -98,8 +166,6 @@ export default function ReceptionBookingPage() {
       const res = await fetch("/api/booking/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-
-        // ✅ WhatsApp fields included here
         body: JSON.stringify({
           clinic_id,
           full_name,
@@ -108,14 +174,12 @@ export default function ReceptionBookingPage() {
           notes,
           starts_at: selectedSlot.starts_at,
           ends_at: selectedSlot.ends_at,
-
           whatsapp_opt_in: whatsappOptIn,
           whatsapp_number: phone,
         }),
       });
 
       const json = await res.json().catch(() => ({}));
-
       if (!res.ok) {
         setToast(json?.error || "Could not create appointment.");
         return;
@@ -136,22 +200,9 @@ export default function ReceptionBookingPage() {
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50 p-6">
       <div className="mx-auto max-w-5xl space-y-4">
-        <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Reception Booking</h1>
-            <p className="text-xs text-slate-400">
-              Create a booking quickly and schedule WhatsApp reminders.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={loadSlots}
-              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-500"
-            >
-              Refresh slots
-            </button>
-          </div>
+        <header className="space-y-1">
+          <h1 className="text-2xl font-semibold">Reception Booking</h1>
+          <p className="text-xs text-slate-400">Create bookings and schedule WhatsApp reminders.</p>
         </header>
 
         {toast && (
@@ -160,45 +211,24 @@ export default function ReceptionBookingPage() {
           </div>
         )}
 
-        {/* Clinic ID helper (for single-clinic use, set NEXT_PUBLIC_DEFAULT_CLINIC_ID) */}
-        {!clinic_id && (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[12px] text-amber-200">
-            <p className="font-semibold">Clinic ID missing</p>
-            <p className="mt-1">
-              Set <span className="font-mono">NEXT_PUBLIC_DEFAULT_CLINIC_ID</span> in Vercel env vars.
-            </p>
-            <div className="mt-3 flex gap-2">
-              <input
-                value={clinic_id}
-                onChange={(e) => setClinicId(e.target.value)}
-                placeholder="Paste clinic_id here to test"
-                className="w-full rounded-lg border border-amber-500/20 bg-slate-950 px-3 py-2 text-[12px] text-slate-100 outline-none"
-              />
-              <button
-                onClick={loadSlots}
-                className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-100 hover:border-amber-400"
-              >
-                Load
-              </button>
-            </div>
-          </div>
-        )}
-
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr),minmax(0,1fr)]">
-          {/* Slots */}
           <div className="rounded-2xl border border-slate-800 bg-slate-950/70 overflow-hidden">
             <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <div>
-                  <p className="text-[12px] text-slate-300">Date</p>
-                  <input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    className="mt-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none"
-                  />
-                </div>
+              <div>
+                <p className="text-[12px] text-slate-300">Date</p>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="mt-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none"
+                />
               </div>
+              <button
+                onClick={loadSlots}
+                className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-500"
+              >
+                Refresh slots
+              </button>
             </div>
 
             <div className="p-4">
@@ -237,7 +267,6 @@ export default function ReceptionBookingPage() {
             </div>
           </div>
 
-          {/* Form */}
           <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4 space-y-3">
             <p className="text-[12px] font-semibold text-slate-100">Patient</p>
 
@@ -275,20 +304,14 @@ export default function ReceptionBookingPage() {
                   onChange={(e) => setWhatsappOptIn(e.target.checked)}
                   className="mt-1"
                 />
-                <span>
-                  WhatsApp reminders + confirm/cancel via WhatsApp (default ON).
-                </span>
+                <span>WhatsApp reminders + confirm/cancel via WhatsApp (default ON).</span>
               </label>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-[12px] text-slate-300">
               <p className="font-semibold text-slate-100">Selected slot</p>
               <p className="mt-1">
-                {selectedSlot
-                  ? `${new Date(selectedSlot.starts_at).toLocaleDateString("en-ZA")} • ${parseISOToLocalTimeLabel(
-                      selectedSlot.starts_at
-                    )}`
-                  : "None"}
+                {selectedSlot ? `${date} • ${safeTimeLabel(selectedSlot.starts_at)}` : "None"}
               </p>
             </div>
 
@@ -299,10 +322,6 @@ export default function ReceptionBookingPage() {
             >
               {submitting ? "Creating…" : "Create appointment"}
             </button>
-
-            <p className="text-[11px] text-slate-500">
-              Reminder flags will be saved on the appointment for the scheduler.
-            </p>
           </div>
         </section>
       </div>

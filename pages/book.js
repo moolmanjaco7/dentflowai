@@ -7,20 +7,85 @@ function fmtDateInput(d) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function parseISOToLocalTimeLabel(iso) {
+function safeTimeLabel(isoOrDateStr) {
   try {
-    const dt = new Date(iso);
+    const dt = new Date(isoOrDateStr);
+    if (Number.isNaN(dt.getTime())) return String(isoOrDateStr || "");
     return dt.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
   } catch {
-    return iso;
+    return String(isoOrDateStr || "");
   }
+}
+
+function buildLocalISO(dateStr, timeStr) {
+  // dateStr: YYYY-MM-DD, timeStr: HH:mm
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const [hh, mm] = timeStr.split(":").map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1, hh || 0, mm || 0, 0, 0);
+  return dt.toISOString();
+}
+
+function normalizeSlots(rawSlots, dateStr) {
+  const arr = Array.isArray(rawSlots) ? rawSlots : [];
+
+  const normalized = arr
+    .map((s) => {
+      // 1) If slot is a string like "09:00"
+      if (typeof s === "string") {
+        const starts_at = buildLocalISO(dateStr, s);
+        // default 30min
+        const dt = new Date(starts_at);
+        dt.setMinutes(dt.getMinutes() + 30);
+        return { starts_at, ends_at: dt.toISOString() };
+      }
+
+      // 2) If slot is object but with different keys
+      const starts =
+        s?.starts_at ||
+        s?.start ||
+        s?.start_time ||
+        s?.startsAt ||
+        s?.from ||
+        s?.begin;
+
+      const ends =
+        s?.ends_at ||
+        s?.end ||
+        s?.end_time ||
+        s?.endsAt ||
+        s?.to ||
+        s?.finish;
+
+      // If starts is "09:00" (time-only), build full ISO using selected date
+      const starts_at =
+        typeof starts === "string" && /^\d{1,2}:\d{2}$/.test(starts)
+          ? buildLocalISO(dateStr, starts)
+          : starts;
+
+      const ends_at =
+        typeof ends === "string" && /^\d{1,2}:\d{2}$/.test(ends)
+          ? buildLocalISO(dateStr, ends)
+          : ends;
+
+      return { ...s, starts_at, ends_at };
+    })
+    .filter((s) => {
+      const a = new Date(s?.starts_at);
+      const b = new Date(s?.ends_at);
+      return (
+        s?.starts_at &&
+        s?.ends_at &&
+        !Number.isNaN(a.getTime()) &&
+        !Number.isNaN(b.getTime())
+      );
+    });
+
+  return normalized;
 }
 
 export default function PublicBookingPage() {
   const router = useRouter();
 
-  // clinic_id can come from query (?clinic_id=...)
-  // or from env NEXT_PUBLIC_DEFAULT_CLINIC_ID
   const clinicIdFromQuery = router.query?.clinic_id ? String(router.query.clinic_id) : "";
   const defaultClinicId = process.env.NEXT_PUBLIC_DEFAULT_CLINIC_ID || "";
   const [clinic_id, setClinicId] = useState("");
@@ -28,7 +93,6 @@ export default function PublicBookingPage() {
   const [date, setDate] = useState(fmtDateInput(new Date()));
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [slots, setSlots] = useState([]);
-
   const [selectedSlot, setSelectedSlot] = useState(null);
 
   const [full_name, setFullName] = useState("");
@@ -36,7 +100,7 @@ export default function PublicBookingPage() {
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
 
-  // ✅ WhatsApp opt-in ON by default (your choice B)
+  // WhatsApp opt-in ON by default
   const [whatsappOptIn, setWhatsappOptIn] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
@@ -52,15 +116,16 @@ export default function PublicBookingPage() {
 
     if (!clinic_id) {
       setSlots([]);
-      setToast("Missing clinic_id. Add ?clinic_id=YOUR_ID to the URL or set NEXT_PUBLIC_DEFAULT_CLINIC_ID.");
+      setToast("Clinic ID missing. Set NEXT_PUBLIC_DEFAULT_CLINIC_ID or pass ?clinic_id=...");
       return;
     }
 
     setLoadingSlots(true);
     try {
-      const res = await fetch(`/api/public/slots?clinic_id=${encodeURIComponent(clinic_id)}&date=${encodeURIComponent(date)}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/public/slots?clinic_id=${encodeURIComponent(clinic_id)}&date=${encodeURIComponent(date)}`,
+        { cache: "no-store" }
+      );
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
@@ -69,8 +134,14 @@ export default function PublicBookingPage() {
         return;
       }
 
-      const json = await res.json();
-      setSlots(json?.slots || []);
+      const json = await res.json().catch(() => ({}));
+      const raw = json?.slots || [];
+      const normalized = normalizeSlots(raw, date);
+      setSlots(normalized);
+
+      if (normalized.length === 0) {
+        setToast("No valid slots returned (slot format mismatch). We fixed UI parsing — if still empty, we’ll adjust the slots API.");
+      }
     } catch (e) {
       console.error(e);
       setSlots([]);
@@ -86,10 +157,9 @@ export default function PublicBookingPage() {
   }, [clinic_id, date]);
 
   const slotGroups = useMemo(() => {
-    // group by hour label for nicer UI (optional)
     const groups = {};
     for (const s of slots) {
-      const label = parseISOToLocalTimeLabel(s.starts_at);
+      const label = safeTimeLabel(s.starts_at);
       const hour = label.slice(0, 2);
       if (!groups[hour]) groups[hour] = [];
       groups[hour].push({ ...s, label });
@@ -110,8 +180,6 @@ export default function PublicBookingPage() {
       const res = await fetch("/api/public/book", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-
-        // ✅ WhatsApp fields included here
         body: JSON.stringify({
           clinic_id,
           full_name,
@@ -122,22 +190,19 @@ export default function PublicBookingPage() {
           ends_at: selectedSlot.ends_at,
 
           whatsapp_opt_in: whatsappOptIn,
-          whatsapp_number: phone, // reuse phone as WhatsApp number for MVP
+          whatsapp_number: phone,
         }),
       });
 
       const json = await res.json().catch(() => ({}));
-
       if (!res.ok) {
         setToast(json?.error || "Could not create booking.");
         return;
       }
 
       setToast("✅ Booking confirmed!");
-      // optional: redirect or clear form
       setSelectedSlot(null);
       setNotes("");
-      // refresh slots after booking
       await loadSlots();
     } catch (e) {
       console.error(e);
@@ -152,39 +217,12 @@ export default function PublicBookingPage() {
       <div className="mx-auto max-w-4xl space-y-4">
         <header className="space-y-1">
           <h1 className="text-2xl font-semibold">Book an Appointment</h1>
-          <p className="text-xs text-slate-400">
-            Choose a date and time, then enter your details to confirm.
-          </p>
+          <p className="text-xs text-slate-400">Choose a date and time, then enter your details.</p>
         </header>
 
         {toast && (
           <div className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-[12px] text-slate-200">
             {toast}
-          </div>
-        )}
-
-        {/* clinic id helper (hidden in real clinic usage via query/env) */}
-        {!clinic_id && (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[12px] text-amber-200">
-            <p className="font-semibold">Clinic ID missing</p>
-            <p className="mt-1">
-              Add <span className="font-mono">?clinic_id=YOUR_ID</span> to the URL, or set{" "}
-              <span className="font-mono">NEXT_PUBLIC_DEFAULT_CLINIC_ID</span>.
-            </p>
-            <div className="mt-3 flex gap-2">
-              <input
-                value={clinic_id}
-                onChange={(e) => setClinicId(e.target.value)}
-                placeholder="Paste clinic_id here to test"
-                className="w-full rounded-lg border border-amber-500/20 bg-slate-950 px-3 py-2 text-[12px] text-slate-100 outline-none"
-              />
-              <button
-                onClick={loadSlots}
-                className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-100 hover:border-amber-400"
-              >
-                Load
-              </button>
-            </div>
           </div>
         )}
 
@@ -283,20 +321,14 @@ export default function PublicBookingPage() {
                   onChange={(e) => setWhatsappOptIn(e.target.checked)}
                   className="mt-1"
                 />
-                <span>
-                  Send me WhatsApp reminders and allow me to confirm/cancel via WhatsApp.
-                </span>
+                <span>Send me WhatsApp reminders and allow confirm/cancel via WhatsApp.</span>
               </label>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 text-[12px] text-slate-300">
               <p className="font-semibold text-slate-100">Selected slot</p>
               <p className="mt-1">
-                {selectedSlot
-                  ? `${new Date(selectedSlot.starts_at).toLocaleDateString("en-ZA")} • ${parseISOToLocalTimeLabel(
-                      selectedSlot.starts_at
-                    )}`
-                  : "None"}
+                {selectedSlot ? `${date} • ${safeTimeLabel(selectedSlot.starts_at)}` : "None"}
               </p>
             </div>
 
@@ -307,10 +339,6 @@ export default function PublicBookingPage() {
             >
               {submitting ? "Booking…" : "Confirm booking"}
             </button>
-
-            <p className="text-[11px] text-slate-500">
-              By booking, you consent to appointment communications from the clinic.
-            </p>
           </div>
         </section>
       </div>
