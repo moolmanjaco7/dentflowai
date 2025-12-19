@@ -1,6 +1,11 @@
 // pages/dashboard.js
 import { useEffect, useState } from "react";
 import DashboardCalendar from "../components/DashboardCalendar";
+import PatientsTab from "../pages/patients"; // adjust path
+
+// ...
+{activeTab === "patients" && <PatientsTab />}
+
 
 function toLocalDateKey(isoString) {
   if (!isoString) return "2025-01-01";

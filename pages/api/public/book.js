@@ -1,123 +1,155 @@
 // pages/api/public/book.js
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE;
 
-function makeDateInSA(dateStr, timeStr) {
-  // dateStr = "2025-12-04", timeStr = "14:15"
-  // Treat as Africa/Johannesburg (+02:00) and return Date
-  return new Date(`${dateStr}T${timeStr}:00+02:00`);
+const supabaseAdmin =
+  supabaseUrl && serviceKey
+    ? createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
+    : null;
+
+function clean(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (!supabaseAdmin) return res.status(500).json({ error: "Supabase admin not configured" });
 
   try {
-    const { full_name, email, phone, date, time, note } = req.body || {};
+    const {
+      clinic_id,
+      full_name,
+      email,
+      phone,
+      starts_at,
+      ends_at,
+      notes,
 
-    if (!full_name || !date || !time) {
-      return res.status(400).json({ error: "Missing required fields" });
+      // WhatsApp fields (NEW)
+      whatsapp_opt_in = true, // ✅ default ON
+      whatsapp_number,
+    } = req.body || {};
+
+    if (!clinic_id || !full_name || !starts_at || !ends_at) {
+      return res.status(400).json({ error: "Missing clinic_id, full_name, starts_at, or ends_at" });
     }
 
-    // 1) Find or create patient (no user_id column needed)
-    let patientId = null;
+    const safeEmail = clean(email);
+    const safePhone = clean(phone);
+    const waOptIn = Boolean(whatsapp_opt_in);
+    const waNumber = clean(whatsapp_number) || safePhone;
+        const [whatsappOptIn, setWhatsappOptIn] = useState(true);
+    <label className="flex items-start gap-2 text-xs text-slate-300">
+  <input
+    type="checkbox"
+    checked={whatsappOptIn}
+    onChange={(e) => setWhatsappOptIn(e.target.checked)}
+  />
+  <span>
+    Send me WhatsApp reminders and allow me to confirm/cancel my appointment via WhatsApp.
+  </span>
+</label>
 
-    let patientQuery = supabaseAdmin
-      .from("patients")
-      .select("id")
-      .ilike("full_name", full_name.trim())
-      .limit(1);
 
-    if (phone) {
-      patientQuery = patientQuery.eq("phone", phone);
-    }
+    // 1) Find or create patient
+    // Prefer email match; fallback phone match
+    let patient = null;
 
-    const { data: existing, error: existingErr } = await patientQuery.maybeSingle();
-
-    if (existingErr) {
-      console.error("existing patient lookup error", existingErr);
-    }
-
-    if (existing?.id) {
-      patientId = existing.id;
-    } else {
-      const { data: inserted, error: insertErr } = await supabaseAdmin
+    if (safeEmail) {
+      const { data } = await supabaseAdmin
         .from("patients")
-        .insert({
-          full_name: full_name.trim(),
-          email: email || null,
-          phone: phone || null,
-          // no user_id here – your table doesn't have this column
-        })
-        .select("id")
+        .select("*")
+        .eq("email", safeEmail)
+        .limit(1)
         .maybeSingle();
-
-      if (insertErr) {
-        console.error("patient insert error", insertErr);
-        return res.status(500).json({
-          error:
-            insertErr.message ||
-            "Could not create patient, please call the clinic.",
-        });
-      }
-      patientId = inserted.id;
+      patient = data || null;
     }
 
-    // 2) Build appointment times in UTC
-    const startLocal = makeDateInSA(date, time);
-    // For now: 30-minute default duration
-    const endLocal = new Date(startLocal.getTime() + 30 * 60 * 1000);
+    if (!patient && safePhone) {
+      const { data } = await supabaseAdmin
+        .from("patients")
+        .select("*")
+        .eq("phone", safePhone)
+        .limit(1)
+        .maybeSingle();
+      patient = data || null;
+    }
 
-    const startsAtIso = startLocal.toISOString();
-    const endsAtIso = endLocal.toISOString();
+    if (!patient) {
+      const { data: created, error: createErr } = await supabaseAdmin
+        .from("patients")
+        .insert([
+          {
+            full_name: clean(full_name),
+            email: safeEmail,
+            phone: safePhone,
 
-    // 3) Simple overlap check for this window
-    const { data: conflicts, error: conflictErr } = await supabaseAdmin
+            // WhatsApp
+            whatsapp_number: waNumber,
+            whatsapp_opt_in: waOptIn,
+            whatsapp_opt_in_at: waOptIn ? new Date().toISOString() : null,
+          },
+        ])
+        .select("*")
+        .single();
+
+      if (createErr) return res.status(500).json({ error: createErr.message });
+      patient = created;
+    } else {
+      // Update patient details (keep existing if missing)
+      const updatePayload = {
+        full_name: clean(full_name) || patient.full_name,
+        email: safeEmail || patient.email,
+        phone: safePhone || patient.phone,
+      };
+
+      // WhatsApp updates:
+      // - If user opted in, ensure wa fields are set
+      // - If opted out, store opt_in false (and keep number if we already have it)
+      updatePayload.whatsapp_opt_in = waOptIn;
+      updatePayload.whatsapp_number = waNumber || patient.whatsapp_number || safePhone;
+      updatePayload.whatsapp_opt_in_at = waOptIn
+        ? (patient.whatsapp_opt_in_at || new Date().toISOString())
+        : null;
+
+      const { error: updErr } = await supabaseAdmin
+        .from("patients")
+        .update(updatePayload)
+        .eq("id", patient.id);
+
+      if (updErr) return res.status(500).json({ error: updErr.message });
+    }
+
+    // 2) Create appointment
+    const { data: appt, error: apptErr } = await supabaseAdmin
       .from("appointments")
-      .select("id")
-      .lte("starts_at", endsAtIso)
-      .gte("ends_at", startsAtIso)
-      .limit(1);
+      .insert([
+        {
+          clinic_id,
+          patient_id: patient.id,
+          starts_at,
+          ends_at,
+          status: "booked",
+          notes: clean(notes),
 
-    if (conflictErr) {
-      console.error("conflict check error", conflictErr);
-    }
+          // WhatsApp workflow fields (NEW)
+          reminder_status: waOptIn ? "scheduled" : "not_scheduled",
+          confirmation_status: "unconfirmed",
+        },
+      ])
+      .select("*")
+      .single();
 
-    if (conflicts && conflicts.length > 0) {
-      return res.status(409).json({
-        error: "Sorry, that time was just taken. Please pick another slot.",
-      });
-    }
+    if (apptErr) return res.status(500).json({ error: apptErr.message });
 
-    // 4) Insert appointment (NOTE: no status – let DB default handle it)
-    const { error: apptErr } = await supabaseAdmin.from("appointments").insert({
-      title: `Online booking — ${full_name}`,
-      patient_id: patientId,
-      starts_at: startsAtIso,
-      ends_at: endsAtIso,
-      // status not sent – DB uses its DEFAULT + CHECK constraint
-      // add any other NOT NULL columns your appointments table needs here
-    });
-
-    if (apptErr) {
-      console.error("appointment insert error", apptErr);
-      return res.status(500).json({
-        error:
-          apptErr.message ||
-          "Could not create appointment. Please call the clinic.",
-      });
-    }
-
-    return res.status(200).json({ ok: true });
-  } catch (e) {
-    console.error("public booking error", e);
-    return res
-      .status(500)
-      .json({ error: e.message || "Unexpected error. Please try again." });
+    return res.status(200).json({ ok: true, appointment: appt, patient });
+  } catch (err) {
+    console.error("public/book error:", err);
+    return res.status(500).json({ error: "Unexpected error" });
   }
 }

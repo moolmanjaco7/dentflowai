@@ -1,79 +1,145 @@
 // pages/api/booking/create.js
-import { supabaseAdmin } from '../../../lib/supabaseAdmin.js'
+import { createClient } from "@supabase/supabase-js";
 
-const TZ = 'Africa/Johannesburg'
-const SLOT_MINUTES = 30
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE;
+
+const supabaseAdmin =
+  supabaseUrl && serviceKey
+    ? createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
+    : null;
+
+function clean(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  return s.length ? s : null;
+}
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'Method not allowed' })
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  if (!supabaseAdmin) return res.status(500).json({ error: "Supabase admin not configured" });
 
   try {
-    const { name, email, phone, date, time, notes } = req.body || {}
-    if (!name || !email || !date || !time) {
-      return res.status(400).json({ ok: false, error: 'Missing name, email, date, or time' })
+    const {
+      clinic_id,
+      full_name,
+      email,
+      phone,
+      starts_at,
+      ends_at,
+      notes,
+
+      // WhatsApp fields (NEW)
+      whatsapp_opt_in = true, // ✅ default ON
+      whatsapp_number,
+    } = req.body || {};
+
+    if (!clinic_id || !full_name || !starts_at || !ends_at) {
+      return res.status(400).json({ error: "Missing clinic_id, full_name, starts_at, or ends_at" });
     }
 
-    const OWNER = process.env.BOOKING_OWNER_EMAIL || 'demo@dentflowai.co.za'
-    const startISO = new Date(`${date}T${time}:00`).toISOString()
-    const endISO = new Date(new Date(startISO).getTime() + SLOT_MINUTES * 60000).toISOString()
+    const safeEmail = clean(email);
+    const safePhone = clean(phone);
+    const waOptIn = Boolean(whatsapp_opt_in);
+    const waNumber = clean(whatsapp_number) || safePhone;
+    const [whatsappOptIn, setWhatsappOptIn] = useState(true);
+    <label className="flex items-start gap-2 text-xs text-slate-300">
+  <input
+    type="checkbox"
+    checked={whatsappOptIn}
+    onChange={(e) => setWhatsappOptIn(e.target.checked)}
+  />
+  <span>
+    Send me WhatsApp reminders and allow me to confirm/cancel my appointment via WhatsApp.
+  </span>
+</label>
 
-    // 1) Ensure patient
-    let { data: patient, error: pErr } = await supabaseAdmin
-      .from('patients')
-      .select('id')
-      .eq('email', email)
-      .eq('created_by', OWNER)
-      .maybeSingle()
 
-    if (pErr && pErr.code !== 'PGRST116') return res.status(500).json({ ok: false, error: pErr.message })
+
+    // Find existing patient by email then phone
+    let patient = null;
+
+    if (safeEmail) {
+      const { data } = await supabaseAdmin
+        .from("patients")
+        .select("*")
+        .eq("email", safeEmail)
+        .limit(1)
+        .maybeSingle();
+      patient = data || null;
+    }
+
+    if (!patient && safePhone) {
+      const { data } = await supabaseAdmin
+        .from("patients")
+        .select("*")
+        .eq("phone", safePhone)
+        .limit(1)
+        .maybeSingle();
+      patient = data || null;
+    }
 
     if (!patient) {
-      const { data, error } = await supabaseAdmin
-        .from('patients')
-        .insert([{ full_name: name, phone, email, created_by: OWNER }])
-        .select('id')
-        .single()
-      if (error) return res.status(500).json({ ok: false, error: error.message })
-      patient = data
+      const { data: created, error: createErr } = await supabaseAdmin
+        .from("patients")
+        .insert([
+          {
+            full_name: clean(full_name),
+            email: safeEmail,
+            phone: safePhone,
+            whatsapp_number: waNumber,
+            whatsapp_opt_in: waOptIn,
+            whatsapp_opt_in_at: waOptIn ? new Date().toISOString() : null,
+          },
+        ])
+        .select("*")
+        .single();
+
+      if (createErr) return res.status(500).json({ error: createErr.message });
+      patient = created;
+    } else {
+      const updatePayload = {
+        full_name: clean(full_name) || patient.full_name,
+        email: safeEmail || patient.email,
+        phone: safePhone || patient.phone,
+        whatsapp_opt_in: waOptIn,
+        whatsapp_number: waNumber || patient.whatsapp_number || safePhone,
+        whatsapp_opt_in_at: waOptIn
+          ? (patient.whatsapp_opt_in_at || new Date().toISOString())
+          : null,
+      };
+
+      const { error: updErr } = await supabaseAdmin
+        .from("patients")
+        .update(updatePayload)
+        .eq("id", patient.id);
+
+      if (updErr) return res.status(500).json({ error: updErr.message });
     }
 
-    // 2) Check conflict again just-in-time
-    const { data: appts, error: apErr } = await supabaseAdmin
-      .from('appointments')
-      .select('id, starts_at, ends_at, status')
-      .gte('starts_at', `${date}T00:00:00`)
-      .lt('starts_at', `${date}T23:59:59`)
-    if (apErr) return res.status(500).json({ ok: false, error: apErr.message })
+    const { data: appt, error: apptErr } = await supabaseAdmin
+      .from("appointments")
+      .insert([
+        {
+          clinic_id,
+          patient_id: patient.id,
+          starts_at,
+          ends_at,
+          status: "booked",
+          notes: clean(notes),
+          reminder_status: waOptIn ? "scheduled" : "not_scheduled",
+          confirmation_status: "unconfirmed",
+        },
+      ])
+      .select("*")
+      .single();
 
-    const start = new Date(startISO)
-    const end = new Date(endISO)
-    const conflict = appts?.some(a => {
-      const as = new Date(a.starts_at)
-      const ae = new Date(a.ends_at)
-      return start < ae && end > as
-    })
-    if (conflict) return res.status(409).json({ ok: false, error: 'Time slot already booked. Pick another.' })
+    if (apptErr) return res.status(500).json({ error: apptErr.message });
 
-    // 3) Create appointment
-    const { data: created, error: cErr } = await supabaseAdmin
-      .from('appointments')
-      .insert([{
-        title: 'Online Booking',
-        starts_at: startISO,
-        ends_at: endISO,
-        status: 'scheduled',
-        notes: notes || 'Booked via public page',
-        patient_id: patient.id,
-        created_by: OWNER
-      }])
-      .select('id')
-      .single()
-    if (cErr) return res.status(500).json({ ok: false, error: cErr.message })
-
-    // (Optional) TODO later: send emails using SMTP
-
-    return res.json({ ok: true, id: created.id })
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: e.message })
+    return res.status(200).json({ ok: true, appointment: appt, patient });
+  } catch (err) {
+    console.error("booking/create error:", err);
+    return res.status(500).json({ error: "Unexpected error" });
   }
 }
