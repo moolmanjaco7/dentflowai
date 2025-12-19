@@ -1,102 +1,92 @@
 // pages/api/public/slots.js
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY // server-only
-);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE;
 
-// Helpers
-const TZ_OFFSET = "+02:00"; // Africa/Johannesburg, no DST
-function toISO(dateYmd, timeHm) { return `${dateYmd}T${timeHm}:00${TZ_OFFSET}`; }
+const supabaseAdmin =
+  supabaseUrl && serviceKey
+    ? createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
+    : null;
 
-// minutes <-> "HH:mm"
-function mmToHm(mm){ const h = Math.floor(mm/60), m = mm%60; return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`; }
-function hmToMm(hm){ const [h,m] = hm.split(":").map(Number); return h*60+m; }
+function buildLocalISO(dateStr, minuteOfDay) {
+  // dateStr: YYYY-MM-DD, minuteOfDay: 0..1439
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const hh = Math.floor(minuteOfDay / 60);
+  const mm = minuteOfDay % 60;
+  // Local time (serverless runs UTC, but Date(y,m,d,hh,mm) creates a "local" date object in runtime tz)
+  // We intentionally construct by components then convert to ISO for consistency.
+  const dt = new Date(y, (m || 1) - 1, d || 1, hh, mm, 0, 0);
+  return dt.toISOString();
+}
+
+function overlaps(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && bStart < aEnd;
+}
 
 export default async function handler(req, res) {
+  if (!supabaseAdmin) return res.status(500).json({ error: "Supabase admin not configured" });
+
   try {
-    const { date, practitioner_id } = req.query || {};
-    if (!date) return res.status(400).json({ ok:false, error:"Missing date" });
+    const clinic_id = String(req.query.clinic_id || "").trim();
+    const date = String(req.query.date || "").trim(); // YYYY-MM-DD
 
-    // 1) Check clinic closed
-    const { data: closed } = await supabase
-      .from("clinic_closed_dates").select("date").eq("date", date).maybeSingle();
-    if (closed) return res.status(200).json({ ok:true, slots: [] });
-
-    // 2) Load slot config
-    const { data: config } = await supabase
-      .from("slot_config").select("slot_minutes, buffer_minutes").eq("id",1).maybeSingle();
-    const slotMinutes = config?.slot_minutes || 15;
-    const bufferMinutes = config?.buffer_minutes || 0;
-
-    // 3) Practitioner hours (or default business hours if none)
-    let dow = new Date(`${date}T00:00:00${TZ_OFFSET}`).getDay(); // 0=Sun..6=Sat
-    dow = (dow + 6) % 7; // make Monday=0 … Sunday=6
-
-    let hours = null;
-    if (practitioner_id) {
-      const { data: ph } = await supabase
-        .from("practitioner_hours")
-        .select("start_minute,end_minute")
-        .eq("practitioner_id", practitioner_id)
-        .eq("dow", dow)
-        .maybeSingle();
-      hours = ph || null;
-    }
-    // default hours if missing: 09:00–17:00 Mon–Fri only
-    if (!hours) {
-      if (dow >= 0 && dow <= 4) {
-        hours = { start_minute: 9*60, end_minute: 17*60 };
-      } else {
-        return res.status(200).json({ ok:true, slots: [] });
-      }
+    if (!clinic_id || !date) {
+      return res.status(400).json({ error: "Missing clinic_id or date" });
     }
 
-    // 4) Generate candidate slots for the day
-    const candidates = [];
-    for (let t = hours.start_minute; t + slotMinutes <= hours.end_minute; t += slotMinutes) {
-      candidates.push(mmToHm(t));
-    }
+    // 1) Get clinic hours
+    const { data: clinic, error: clinicErr } = await supabaseAdmin
+      .from("clinics")
+      .select("id, open_minute, close_minute, slot_minutes")
+      .eq("id", clinic_id)
+      .single();
 
-    // 5) Load existing appointments for overlap filtering
-    const dayStartISO = toISO(date, "00:00");
-    const dayEndISO   = toISO(date, "23:59");
+    if (clinicErr) return res.status(500).json({ error: clinicErr.message });
 
-    let q = supabase
+    const openMin = Number.isFinite(clinic?.open_minute) ? clinic.open_minute : 480;
+    const closeMin = Number.isFinite(clinic?.close_minute) ? clinic.close_minute : 1020;
+    const step = Number.isFinite(clinic?.slot_minutes) ? clinic.slot_minutes : 30;
+
+    // 2) Load existing appointments for the day (exclude cancelled)
+    const dayStartISO = buildLocalISO(date, 0);
+    const dayEndISO = buildLocalISO(date, 1439);
+
+    const { data: appts, error: apptErr } = await supabaseAdmin
       .from("appointments")
-      .select("starts_at, ends_at, practitioner_id")
-      .gte("starts_at", new Date(dayStartISO).toISOString())
-      .lte("starts_at", new Date(dayEndISO).toISOString());
-    if (practitioner_id) q = q.eq("practitioner_id", practitioner_id);
-    const { data: appts } = await q;
+      .select("starts_at, ends_at, status")
+      .eq("clinic_id", clinic_id)
+      .gte("starts_at", dayStartISO)
+      .lte("starts_at", dayEndISO)
+      .not("status", "eq", "cancelled");
 
-    // 6) Build a fast overlap checker
-    const blocks = (appts || []).map(a => ({
-      s: new Date(a.starts_at).getUTCHours()*60 + new Date(a.starts_at).getUTCMinutes(),
-      e: new Date(a.ends_at).getUTCHours()*60 + new Date(a.ends_at).getUTCMinutes(),
-    }));
+    if (apptErr) return res.status(500).json({ error: apptErr.message });
 
-    // Convert local HH:mm to UTC minutes-of-day for compare (add TZ offset 120 min)
-    const OFFSET_MIN = 120;
+    const busy = (appts || [])
+      .map((a) => ({
+        start: new Date(a.starts_at).getTime(),
+        end: new Date(a.ends_at).getTime(),
+      }))
+      .filter((x) => Number.isFinite(x.start) && Number.isFinite(x.end));
 
-    const free = candidates.filter(hm => {
-      const startLocal = hmToMm(hm);
-      const endLocal   = startLocal + slotMinutes + bufferMinutes;
+    // 3) Generate slots
+    const slots = [];
+    for (let t = openMin; t + step <= closeMin; t += step) {
+      const starts_at = buildLocalISO(date, t);
+      const ends_at = buildLocalISO(date, t + step);
 
-      const startUTC = startLocal - OFFSET_MIN;
-      const endUTC   = endLocal   - OFFSET_MIN;
+      const s = new Date(starts_at).getTime();
+      const e = new Date(ends_at).getTime();
+      if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
 
-      // overlap if NOT (end<=s || start>=e)
-      for (const b of blocks) {
-        if (!(endUTC <= b.s || startUTC >= b.e)) return false;
-      }
-      return true;
-    });
+      const isBusy = busy.some((b) => overlaps(s, e, b.start, b.end));
+      if (!isBusy) slots.push({ starts_at, ends_at });
+    }
 
-    return res.status(200).json({ ok:true, slots: free });
-  } catch (e) {
-    console.error(e);
-    return res.status(500).json({ ok:false, error:e.message || "Server error" });
+    return res.status(200).json({ slots });
+  } catch (err) {
+    console.error("public/slots error:", err);
+    return res.status(500).json({ error: "Unexpected error" });
   }
 }

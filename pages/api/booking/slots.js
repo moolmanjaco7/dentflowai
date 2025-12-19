@@ -1,76 +1,83 @@
 // pages/api/booking/slots.js
-import { supabaseAdmin } from '../../../lib/supabaseAdmin.js'
+import { createClient } from "@supabase/supabase-js";
 
-const TZ = 'Africa/Johannesburg'
-const SLOT_MINUTES = 30 // slot length
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const serviceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE;
 
-export default async function handler(req, res) {
-  try {
-    const { date } = req.query
-    if (!date) return res.status(400).json({ ok: false, error: 'Missing date (YYYY-MM-DD)' })
+const supabaseAdmin =
+  supabaseUrl && serviceKey
+    ? createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
+    : null;
 
-    const day = new Date(`${date}T00:00:00`)
-    const weekday = day.getDay() // 0..6
-
-    // 1) Blackout?
-    const { data: blackout } = await supabaseAdmin
-      .from('blackout_dates')
-      .select('date')
-      .eq('date', date)
-      .maybeSingle()
-    if (blackout) return res.json({ ok: true, slots: [] })
-
-    // 2) Working hours for weekday
-    const { data: spans, error: avErr } = await supabaseAdmin
-      .from('availability')
-      .select('start_time, end_time')
-      .eq('weekday', weekday)
-
-    if (avErr) return res.status(500).json({ ok: false, error: avErr.message })
-    if (!spans?.length) return res.json({ ok: true, slots: [] })
-
-    // 3) Generate slots
-    const slots = []
-    for (const span of spans) {
-      const [sh, sm] = span.start_time.split(':').map(Number)
-      const [eh, em] = span.end_time.split(':').map(Number)
-      let cursor = new Date(`${date}T${pad(sh)}:${pad(sm)}:00`)
-      const end = new Date(`${date}T${pad(eh)}:${pad(em)}:00`)
-      while (cursor < end) {
-        const next = new Date(cursor.getTime() + SLOT_MINUTES * 60000)
-        if (next <= end) slots.push(new Date(cursor))
-        cursor = next
-      }
-    }
-
-    // 4) Remove past times for "today"
-    const nowTZ = new Date(new Date().toLocaleString('en-ZA', { timeZone: TZ }))
-    const slotsFuture = slots.filter(s => s > nowTZ)
-
-    // 5) Remove slots overlapping existing appointments (not canceled)
-    const { data: appts, error: apErr } = await supabaseAdmin
-      .from('appointments')
-      .select('starts_at, ends_at, status, created_by')
-      .or("status.eq.scheduled,status.eq.confirmed,status.eq.completed") // treat these as blocking
-      .gte('starts_at', `${date}T00:00:00`)
-      .lt('starts_at', `${date}T23:59:59`)
-
-    if (apErr) return res.status(500).json({ ok: false, error: apErr.message })
-
-    const free = slotsFuture.filter(slot => {
-      const slotEnd = new Date(slot.getTime() + SLOT_MINUTES * 60000)
-      return !appts?.some(a => {
-        const as = new Date(a.starts_at)
-        const ae = new Date(a.ends_at)
-        // overlap test: (slot < ae) && (slotEnd > as)
-        return slot < ae && slotEnd > as
-      })
-    })
-
-    res.json({ ok: true, slots: free.map(s => s.toISOString()) })
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message })
-  }
+function buildLocalISO(dateStr, minuteOfDay) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const hh = Math.floor(minuteOfDay / 60);
+  const mm = minuteOfDay % 60;
+  const dt = new Date(y, (m || 1) - 1, d || 1, hh, mm, 0, 0);
+  return dt.toISOString();
 }
 
-function pad(n) { return String(n).padStart(2, '0') }
+function overlaps(aStart, aEnd, bStart, bEnd) {
+  return aStart < bEnd && bStart < aEnd;
+}
+
+export default async function handler(req, res) {
+  if (!supabaseAdmin) return res.status(500).json({ error: "Supabase admin not configured" });
+
+  try {
+    const clinic_id = String(req.query.clinic_id || "").trim();
+    const date = String(req.query.date || "").trim();
+
+    if (!clinic_id || !date) {
+      return res.status(400).json({ error: "Missing clinic_id or date" });
+    }
+
+    const { data: clinic, error: clinicErr } = await supabaseAdmin
+      .from("clinics")
+      .select("id, open_minute, close_minute, slot_minutes")
+      .eq("id", clinic_id)
+      .single();
+
+    if (clinicErr) return res.status(500).json({ error: clinicErr.message });
+
+    const openMin = Number.isFinite(clinic?.open_minute) ? clinic.open_minute : 480;
+    const closeMin = Number.isFinite(clinic?.close_minute) ? clinic.close_minute : 1020;
+    const step = Number.isFinite(clinic?.slot_minutes) ? clinic.slot_minutes : 30;
+
+    const dayStartISO = buildLocalISO(date, 0);
+    const dayEndISO = buildLocalISO(date, 1439);
+
+    const { data: appts, error: apptErr } = await supabaseAdmin
+      .from("appointments")
+      .select("starts_at, ends_at, status")
+      .eq("clinic_id", clinic_id)
+      .gte("starts_at", dayStartISO)
+      .lte("starts_at", dayEndISO)
+      .not("status", "eq", "cancelled");
+
+    if (apptErr) return res.status(500).json({ error: apptErr.message });
+
+    const busy = (appts || [])
+      .map((a) => ({ start: new Date(a.starts_at).getTime(), end: new Date(a.ends_at).getTime() }))
+      .filter((x) => Number.isFinite(x.start) && Number.isFinite(x.end));
+
+    const slots = [];
+    for (let t = openMin; t + step <= closeMin; t += step) {
+      const starts_at = buildLocalISO(date, t);
+      const ends_at = buildLocalISO(date, t + step);
+
+      const s = new Date(starts_at).getTime();
+      const e = new Date(ends_at).getTime();
+      if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+
+      const isBusy = busy.some((b) => overlaps(s, e, b.start, b.end));
+      if (!isBusy) slots.push({ starts_at, ends_at });
+    }
+
+    return res.status(200).json({ slots });
+  } catch (err) {
+    console.error("booking/slots error:", err);
+    return res.status(500).json({ error: "Unexpected error" });
+  }
+}
