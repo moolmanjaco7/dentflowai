@@ -1,8 +1,9 @@
 // pages/dashboard.js
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import DashboardCalendar from "../components/DashboardCalendar";
 
-function toLocalDateKey(d) {
+function toKey(d) {
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return "";
   const y = dt.getFullYear();
@@ -37,26 +38,24 @@ async function fetchJson(url) {
 }
 
 export default function DashboardPage() {
-  // ✅ Fix: define activeTab so build never crashes
-  const [activeTab, setActiveTab] = useState("today"); // today | week | month
+  const [activeTab, setActiveTab] = useState("month"); // day | month
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [appointments, setAppointments] = useState([]);
 
-  // we use local date by default
-  const [selectedDate, setSelectedDate] = useState(toLocalDateKey(new Date()));
+  const [appointments, setAppointments] = useState([]);
+  const [selectedDateKey, setSelectedDateKey] = useState(toKey(new Date()));
+  const [monthKey, setMonthKey] = useState(toKey(new Date()));
+
+  const [selectedAppt, setSelectedAppt] = useState(null);
+
+  const [waStats, setWaStats] = useState({ queuedTotal: 0, sentToday: 0, failedToday: 0 });
+  const [waStatsError, setWaStatsError] = useState("");
 
   async function loadAppointments() {
     setLoading(true);
     setError("");
 
-    // Try likely endpoints in your repo. Use the first that exists.
-    const candidates = [
-      "/api/appointments/list",
-      "/api/appointments",
-      "/api/appointments/all",
-    ];
-
+    const candidates = ["/api/appointments/list", "/api/appointments", "/api/appointments/all"];
     let found = null;
 
     for (const url of candidates) {
@@ -66,9 +65,7 @@ export default function DashboardPage() {
         found = json;
         break;
       }
-      // 404 means endpoint doesn't exist, try next
       if (status !== 404) {
-        // Some other failure (401/500)
         setError(json?.error || `Could not load appointments (${status}).`);
         setLoading(false);
         return;
@@ -82,8 +79,6 @@ export default function DashboardPage() {
       return;
     }
 
-    // Accept multiple shapes:
-    // { appointments: [...] } or { data: [...] } or [...]
     const list =
       Array.isArray(found) ? found :
       Array.isArray(found?.appointments) ? found.appointments :
@@ -94,32 +89,40 @@ export default function DashboardPage() {
     setLoading(false);
   }
 
+  async function loadWhatsAppStats() {
+    setWaStatsError("");
+    // if you added WHATSAPP_STATS_SECRET, set NEXT_PUBLIC_WHATSAPP_STATS_KEY in Vercel and use it here
+    const key = process.env.NEXT_PUBLIC_WHATSAPP_STATS_KEY;
+    const url = key ? `/api/whatsapp/stats?key=${encodeURIComponent(key)}` : "/api/whatsapp/stats";
+
+    const { ok, json } = await fetchJson(url);
+    if (!ok) {
+      setWaStatsError(json?.error || "Could not load WhatsApp stats.");
+      return;
+    }
+    setWaStats({
+      queuedTotal: json?.queuedTotal || 0,
+      sentToday: json?.sentToday || 0,
+      failedToday: json?.failedToday || 0,
+    });
+  }
+
   useEffect(() => {
     loadAppointments();
+    loadWhatsAppStats();
   }, []);
 
-  const filtered = useMemo(() => {
-    if (!appointments || appointments.length === 0) return [];
+  const dayAppointments = useMemo(() => {
+    const k = selectedDateKey;
+    if (!k) return [];
+    return (appointments || []).filter((a) => toKey(a?.starts_at || a?.start || a?.startsAt) === k);
+  }, [appointments, selectedDateKey]);
 
-    const sd = selectedDate;
-    if (!sd) return appointments;
-
-    // Filter by selectedDate in local time
-    return appointments.filter((a) => {
-      const key = toLocalDateKey(a?.starts_at || a?.start || a?.startsAt);
-      return key === sd;
-    });
-  }, [appointments, selectedDate]);
-
-  const todayLabel = useMemo(() => {
-    try {
-      const dt = new Date(selectedDate);
-      if (Number.isNaN(dt.getTime())) return "Selected day";
-      return dt.toLocaleDateString("en-ZA", { weekday: "long", year: "numeric", month: "short", day: "numeric" });
-    } catch {
-      return "Selected day";
-    }
-  }, [selectedDate]);
+  const selectedDayLabel = useMemo(() => {
+    const d = new Date(selectedDateKey);
+    if (Number.isNaN(d.getTime())) return "Selected day";
+    return d.toLocaleDateString("en-ZA", { weekday: "long", year: "numeric", month: "short", day: "numeric" });
+  }, [selectedDateKey]);
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50 p-6">
@@ -127,7 +130,7 @@ export default function DashboardPage() {
         <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Dashboard</h1>
-            <p className="text-xs text-slate-400">Appointments and clinic overview.</p>
+            <p className="text-xs text-slate-400">Calendar + appointments + WhatsApp pipeline.</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -138,7 +141,10 @@ export default function DashboardPage() {
               Reception booking
             </Link>
             <button
-              onClick={loadAppointments}
+              onClick={() => {
+                loadAppointments();
+                loadWhatsAppStats();
+              }}
               className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
             >
               Refresh
@@ -147,11 +153,10 @@ export default function DashboardPage() {
         </header>
 
         {/* Tabs */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           {[
-            { k: "today", label: "Day" },
-            { k: "week", label: "Week" },
             { k: "month", label: "Month" },
+            { k: "day", label: "Day" },
           ].map((t) => (
             <button
               key={t.k}
@@ -165,88 +170,127 @@ export default function DashboardPage() {
               {t.label}
             </button>
           ))}
-
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-[12px] text-slate-400">Date</span>
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none"
-            />
-          </div>
         </div>
 
-        {error && (
+        {(error || waStatsError) && (
           <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-[12px] text-rose-200">
-            {error}
+            {error || waStatsError}
           </div>
         )}
 
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr),minmax(0,1fr)]">
-          {/* Appointment list */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/70 overflow-hidden">
-            <div className="border-b border-slate-800 px-4 py-3">
-              <p className="text-[12px] font-semibold text-slate-100">{todayLabel}</p>
-              <p className="text-[11px] text-slate-500">Showing appointments for selected date.</p>
-            </div>
-
-            <div className="p-4">
-              {loading ? (
-                <p className="text-sm text-slate-400">Loading appointments…</p>
-              ) : filtered.length === 0 ? (
-                <div className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-4">
-                  <p className="text-[13px] font-semibold text-slate-100">No appointments</p>
-                  <p className="mt-1 text-[12px] text-slate-400">
-                    Create one from Reception Booking.
-                  </p>
+        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr),minmax(0,0.6fr)]">
+          {/* Main */}
+          <div className="space-y-4">
+            {activeTab === "month" ? (
+              <DashboardCalendar
+                appointments={appointments}
+                monthKey={monthKey}
+                onChangeMonthKey={(k) => setMonthKey(k)}
+                selectedDateKey={selectedDateKey}
+                onSelectDateKey={(k) => {
+                  setSelectedDateKey(k);
+                  setActiveTab("day");
+                }}
+                onSelectAppointment={(a) => setSelectedAppt(a)}
+              />
+            ) : (
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 overflow-hidden">
+                <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                  <div>
+                    <p className="text-[12px] text-slate-400">Appointments</p>
+                    <p className="text-[14px] font-semibold text-slate-100">{selectedDayLabel}</p>
+                  </div>
+                  <input
+                    type="date"
+                    value={selectedDateKey}
+                    onChange={(e) => setSelectedDateKey(e.target.value)}
+                    className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none"
+                  />
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  {filtered
-                    .slice()
-                    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
-                    .map((a) => {
-                      const patientName =
-                        a?.patient?.full_name ||
-                        a?.patient_name ||
-                        a?.full_name ||
-                        a?.patient_full_name ||
-                        "Patient";
-                      const status = a?.status || "booked";
-                      const starts = a?.starts_at || a?.start || a?.startsAt;
-                      const ends = a?.ends_at || a?.end || a?.endsAt;
 
-                      return (
-                        <div
-                          key={a?.id || `${starts}_${patientName}`}
-                          className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900 px-3 py-3"
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 rounded-xl border border-slate-700 bg-slate-950/40 flex items-center justify-center text-[12px] text-slate-100">
-                              {initials(patientName)}
-                            </div>
-                            <div>
-                              <p className="text-[13px] font-semibold text-slate-100">{patientName}</p>
-                              <p className="text-[11px] text-slate-500">
-                                {timeLabel(starts)} – {timeLabel(ends)}
-                              </p>
-                            </div>
-                          </div>
+                <div className="p-4">
+                  {loading ? (
+                    <p className="text-sm text-slate-400">Loading appointments…</p>
+                  ) : dayAppointments.length === 0 ? (
+                    <div className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-4">
+                      <p className="text-[13px] font-semibold text-slate-100">No appointments</p>
+                      <p className="mt-1 text-[12px] text-slate-400">Create one from Reception Booking.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {dayAppointments
+                        .slice()
+                        .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
+                        .map((a) => {
+                          const patientName =
+                            a?.patient?.full_name ||
+                            a?.patient_name ||
+                            a?.full_name ||
+                            a?.patient_full_name ||
+                            "Patient";
+                          const status = a?.status || "booked";
+                          const starts = a?.starts_at || a?.start || a?.startsAt;
+                          const ends = a?.ends_at || a?.end || a?.endsAt;
 
-                          <span className="rounded-full border border-slate-700 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-200">
-                            {status}
-                          </span>
-                        </div>
-                      );
-                    })}
+                          return (
+                            <button
+                              key={a?.id || `${starts}_${patientName}`}
+                              onClick={() => setSelectedAppt(a)}
+                              className="w-full text-left flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 hover:border-slate-600"
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="h-9 w-9 rounded-xl border border-slate-700 bg-slate-950/40 flex items-center justify-center text-[12px] text-slate-100">
+                                  {initials(patientName)}
+                                </div>
+                                <div>
+                                  <p className="text-[13px] font-semibold text-slate-100">{patientName}</p>
+                                  <p className="text-[11px] text-slate-500">
+                                    {timeLabel(starts)} – {timeLabel(ends)}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <span className="rounded-full border border-slate-700 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-200">
+                                {status}
+                              </span>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
-          {/* Quick links / stats */}
+          {/* Side cards */}
           <div className="space-y-4">
+            {/* WhatsApp status card */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+              <p className="text-[12px] font-semibold text-slate-100">WhatsApp pipeline</p>
+              <p className="mt-1 text-[12px] text-slate-400">Cron will queue + send automatically.</p>
+
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+                  <p className="text-[10px] text-slate-400">Queued</p>
+                  <p className="text-lg font-semibold">{waStats.queuedTotal}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+                  <p className="text-[10px] text-slate-400">Sent today</p>
+                  <p className="text-lg font-semibold">{waStats.sentToday}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+                  <p className="text-[10px] text-slate-400">Failed today</p>
+                  <p className="text-lg font-semibold">{waStats.failedToday}</p>
+                </div>
+              </div>
+
+              <div className="mt-3 text-[11px] text-slate-500 space-y-1">
+                <div className="font-mono">/api/whatsapp/queue-reminders</div>
+                <div className="font-mono">/api/whatsapp/send-queued</div>
+              </div>
+            </div>
+
             <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
               <p className="text-[12px] font-semibold text-slate-100">Quick actions</p>
               <div className="mt-3 grid gap-2">
@@ -254,7 +298,7 @@ export default function DashboardPage() {
                   href="/patients"
                   className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
                 >
-                  View patients
+                  Patients
                 </Link>
                 <Link
                   href="/reception-booking"
@@ -264,21 +308,76 @@ export default function DashboardPage() {
                 </Link>
               </div>
             </div>
-
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-              <p className="text-[12px] font-semibold text-slate-100">WhatsApp reminders</p>
-              <p className="mt-1 text-[12px] text-slate-400">
-                Queue and send reminders using your worker endpoints when ready.
-              </p>
-              <div className="mt-3 text-[11px] text-slate-500 space-y-1">
-                <div className="font-mono">/api/whatsapp/queue-reminders</div>
-                <div className="font-mono">/api/whatsapp/send-queued</div>
-              </div>
-            </div>
           </div>
         </section>
 
-        {/* Note: activeTab is currently UI-only; week/month views can be re-added later */}
+        {/* Appointment modal */}
+        {selectedAppt && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-950">
+              <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+                <p className="text-[13px] font-semibold text-slate-100">Appointment</p>
+                <button
+                  onClick={() => setSelectedAppt(null)}
+                  className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="p-4 text-[12px] text-slate-200 space-y-2">
+                {(() => {
+                  const a = selectedAppt;
+                  const patientName =
+                    a?.patient?.full_name ||
+                    a?.patient_name ||
+                    a?.full_name ||
+                    a?.patient_full_name ||
+                    "Patient";
+                  const starts = a?.starts_at || a?.start || a?.startsAt;
+                  const ends = a?.ends_at || a?.end || a?.endsAt;
+                  return (
+                    <>
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-xl border border-slate-700 bg-slate-900 flex items-center justify-center text-[13px] font-semibold">
+                          {initials(patientName)}
+                        </div>
+                        <div>
+                          <p className="text-[14px] font-semibold text-slate-100">{patientName}</p>
+                          <p className="text-[11px] text-slate-500">
+                            {timeLabel(starts)} – {timeLabel(ends)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Status</span>
+                          <span className="text-slate-100">{a?.status || "booked"}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Reminder</span>
+                          <span className="text-slate-100">{a?.reminder_status || "—"}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Confirmation</span>
+                          <span className="text-slate-100">{a?.confirmation_status || "—"}</span>
+                        </div>
+                      </div>
+
+                      {a?.notes && (
+                        <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+                          <p className="text-slate-400 mb-1">Notes</p>
+                          <p className="text-slate-100">{a.notes}</p>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );

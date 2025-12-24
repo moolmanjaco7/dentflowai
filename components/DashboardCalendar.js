@@ -1,491 +1,197 @@
 // components/DashboardCalendar.js
+import React, { useMemo } from "react";
 
-import { useMemo, useState } from "react";
-
-// ----------------------------
-// Helpers
-// ----------------------------
-function pad(n) {
-  return String(n).padStart(2, "0");
+function toKey(d) {
+  const dt = new Date(d);
+  if (Number.isNaN(dt.getTime())) return "";
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-function parseDateKey(dateKey) {
-  const [y, m, d] = dateKey.split("-").map(Number);
-  if (!y || !m || !d) return new Date();
-  return new Date(y, m - 1, d);
+function fromKey(key) {
+  // key: YYYY-MM-DD
+  const [y, m, d] = String(key).split("-").map(Number);
+  return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
 }
 
-function getMonthGrid(current) {
-  const year = current.getFullYear();
-  const month = current.getMonth();
+function initials(name) {
+  const s = String(name || "").trim();
+  if (!s) return "—";
+  const parts = s.split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] || "";
+  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] : "";
+  return (a + b).toUpperCase();
+}
 
-  const firstOfMonth = new Date(year, month, 1);
-  const firstDay = firstOfMonth.getDay(); // 0 = Sunday
-  const offset = (firstDay + 6) % 7; // Monday = 0
+function addMonths(date, delta) {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + delta);
+  d.setDate(1);
+  return d;
+}
 
-  const start = new Date(year, month, 1 - offset);
+function monthTitle(date) {
+  return date.toLocaleDateString("en-ZA", { month: "long", year: "numeric" });
+}
 
-  const weeks = [];
-  let cursor = new Date(start);
+function startOfMonthGrid(date) {
+  // Monday-start week
+  const d = new Date(date.getFullYear(), date.getMonth(), 1);
+  const day = d.getDay(); // Sun=0
+  const mondayIndex = (day + 6) % 7; // Mon=0..Sun=6
+  d.setDate(d.getDate() - mondayIndex);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
 
-  for (let w = 0; w < 6; w++) {
-    const week = [];
-    for (let d = 0; d < 7; d++) {
-      week.push(new Date(cursor));
-      cursor.setDate(cursor.getDate() + 1);
+function sameMonth(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
+export default function DashboardCalendar({
+  appointments = [],
+  monthKey,
+  onChangeMonthKey,
+  selectedDateKey,
+  onSelectDateKey,
+  onSelectAppointment,
+}) {
+  const monthDate = useMemo(() => fromKey(monthKey || toKey(new Date())), [monthKey]);
+
+  const gridStart = useMemo(() => startOfMonthGrid(monthDate), [monthDate]);
+
+  const apptsByDay = useMemo(() => {
+    const map = new Map();
+    for (const a of appointments || []) {
+      const starts = a?.starts_at || a?.start || a?.startsAt;
+      const k = toKey(starts);
+      if (!k) continue;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(a);
     }
-    weeks.push(week);
-  }
-
-  return weeks;
-}
-
-const weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-function getInitials(name) {
-  if (!name) return "?";
-  const parts = String(name)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
-  return (
-    parts[0].charAt(0).toUpperCase() +
-    parts[parts.length - 1].charAt(0).toUpperCase()
-  );
-}
-
-function statusColor(status) {
-  const s = (status || "").toLowerCase();
-  if (s.includes("confirm")) return "bg-emerald-500";
-  if (s.includes("cancel")) return "bg-rose-500";
-  if (s.includes("pending") || s.includes("tentative")) return "bg-amber-500";
-  return "bg-slate-500";
-}
-
-// ----------------------------
-// Component
-// ----------------------------
-export default function DashboardCalendar({ appointments }) {
-  const [viewMode, setViewMode] = useState("month");
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selected, setSelected] = useState(null);
-
-  const todayKey = useMemo(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  }, []);
-
-  // Group by date
-  const grouped = useMemo(() => {
-    const map = {};
-    (appointments || []).forEach((a) => {
-      if (!a.date) return;
-      if (!map[a.date]) map[a.date] = [];
-      map[a.date].push(a);
-    });
-    // Sort in each day by time
-    Object.values(map).forEach((list) => {
-      list.sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
-    });
+    // sort each day by time
+    for (const [k, arr] of map.entries()) {
+      arr.sort((x, y) => new Date(x.starts_at).getTime() - new Date(y.starts_at).getTime());
+      map.set(k, arr);
+    }
     return map;
   }, [appointments]);
 
-  const monthWeeks = useMemo(() => getMonthGrid(currentDate), [currentDate]);
-
-  const monthLabel = useMemo(
-    () =>
-      currentDate.toLocaleDateString("en-GB", {
-        month: "long",
-        year: "numeric",
-      }),
-    [currentDate]
-  );
-
-  const weekDays = useMemo(() => {
-    if (viewMode !== "week") return [];
-    const d = new Date(currentDate);
-    const weekday = (d.getDay() + 6) % 7; // Monday=0
-    d.setDate(d.getDate() - weekday);
-
-    const arr = [];
-    for (let i = 0; i < 7; i++) {
-      arr.push(new Date(d));
+  const days = useMemo(() => {
+    const out = [];
+    const d = new Date(gridStart);
+    for (let i = 0; i < 42; i++) {
+      out.push(new Date(d));
       d.setDate(d.getDate() + 1);
     }
-    return arr;
-  }, [viewMode, currentDate]);
+    return out;
+  }, [gridStart]);
 
-  function goPrev() {
-    const d = new Date(currentDate);
-    if (viewMode === "month") d.setMonth(d.getMonth() - 1);
-    else d.setDate(d.getDate() - 7);
-    setCurrentDate(d);
-  }
-
-  function goNext() {
-    const d = new Date(currentDate);
-    if (viewMode === "month") d.setMonth(d.getMonth() + 1);
-    else d.setDate(d.getDate() + 7);
-    setCurrentDate(d);
-  }
-
-  function goToday() {
-    setCurrentDate(new Date());
-  }
-
-  // ----------------------------
-  // Render pieces
-  // ----------------------------
-  function renderStatusDot(status) {
-    return (
-      <span className={`h-1.5 w-1.5 rounded-full ${statusColor(status)}`} />
-    );
-  }
-
-  function renderMonthView() {
-    const monthIndex = currentDate.getMonth();
-
-    return (
-      <div className="space-y-2">
-        {/* Week labels */}
-        <div className="grid grid-cols-7 rounded-t-lg bg-slate-950 text-[10px] text-slate-400">
-          {weekdayLabels.map((lbl) => (
-            <div
-              key={lbl}
-              className="border border-slate-800 py-1 text-center font-medium uppercase tracking-wide"
-            >
-              {lbl}
-            </div>
-          ))}
-        </div>
-
-        {/* Month Cells */}
-        <div className="grid grid-cols-7 rounded-b-lg border border-slate-800 bg-slate-950">
-          {monthWeeks.map((week, wi) =>
-            week.map((day, di) => {
-              const dateKey = `${day.getFullYear()}-${pad(
-                day.getMonth() + 1
-              )}-${pad(day.getDate())}`;
-              const appts = grouped[dateKey] || [];
-              const isToday = dateKey === todayKey;
-              const inMonth = day.getMonth() === monthIndex;
-
-              return (
-                <div
-                  key={`${wi}-${di}`}
-                  className={`min-h-[80px] p-1.5 border border-slate-900 flex flex-col gap-1 ${
-                    inMonth ? "bg-slate-950" : "bg-slate-950/60 text-slate-500"
-                  } ${isToday ? "ring-1 ring-emerald-500/70" : ""}`}
-                >
-                  {/* Date heading */}
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                        isToday
-                          ? "bg-emerald-500 text-slate-950 font-semibold"
-                          : "text-slate-300"
-                      }`}
-                    >
-                      {day.getDate()}
-                    </span>
-                    {appts.length > 0 && (
-                      <span className="text-[9px] text-slate-500">
-                        {appts.length} appt{appts.length > 1 ? "s" : ""}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Appointments in cell */}
-                  <div className="flex flex-col gap-0.5">
-                    {appts.slice(0, 3).map((appt) => (
-                      <button
-                        key={appt.id}
-                        type="button"
-                        className="group flex items-center gap-1 rounded-md bg-slate-900/90 px-1 py-0.5 text-left hover:bg-slate-800"
-                        onClick={() => setSelected(appt)}
-                      >
-                        {/* Initials pill */}
-                        <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-700 text-[9px] font-semibold text-slate-50">
-                          {getInitials(appt.patientName)}
-                        </span>
-
-                        <div className="flex-1 truncate">
-                          <div className="flex items-center gap-1 text-[10px] text-slate-100">
-                            <span>{appt.startTime || "Time"}</span>
-                            <span className="text-slate-500">•</span>
-                            <span className="truncate text-slate-300">
-                              {appt.patientName || "Patient"}
-                            </span>
-                          </div>
-                          {appt.practitionerName && (
-                            <div className="truncate text-[9px] text-slate-500">
-                              {appt.practitionerName}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Status dot */}
-                        {renderStatusDot(appt.status)}
-                      </button>
-                    ))}
-
-                    {appts.length > 3 && (
-                      <span className="text-[9px] text-slate-500">
-                        + {appts.length - 3} more…
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  function renderWeekView() {
-    if (weekDays.length === 0) return null;
-
-    return (
-      <div className="rounded-xl border border-slate-800 bg-slate-950">
-        <div className="grid grid-cols-7 border-b border-slate-800 text-[11px] text-slate-400">
-          {weekDays.map((day) => {
-            const dateKey = `${day.getFullYear()}-${pad(
-              day.getMonth() + 1
-            )}-${pad(day.getDate())}`;
-            const isToday = dateKey === todayKey;
-            const appts = grouped[dateKey] || [];
-
-            return (
-              <div
-                key={dateKey}
-                className={`border-r border-slate-800 px-2 py-2 last:border-r-0 ${
-                  isToday ? "bg-slate-950" : ""
-                }`}
-              >
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-[11px] font-medium text-slate-200">
-                    {day.toLocaleDateString("en-GB", {
-                      weekday: "short",
-                      day: "numeric",
-                      month: "short",
-                    })}
-                  </span>
-                  {isToday && (
-                    <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] text-emerald-300">
-                      Today
-                    </span>
-                  )}
-                </div>
-
-                <div className="space-y-1">
-                  {appts.map((appt) => (
-                    <button
-                      key={appt.id}
-                      type="button"
-                      className="flex w-full items-center gap-1 rounded-md bg-slate-950 px-1.5 py-1 text-left text-[10px] text-slate-100 hover:bg-slate-800"
-                      onClick={() => setSelected(appt)}
-                    >
-                      <span className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-700 text-[9px] font-semibold text-slate-50">
-                        {getInitials(appt.patientName)}
-                      </span>
-                      {renderStatusDot(appt.status)}
-                      <div className="flex-1 truncate">
-                        <div className="truncate">
-                          {appt.startTime || "Time"}{" "}
-                          {appt.patientName && (
-                            <span className="text-slate-400">
-                              • {appt.patientName}
-                            </span>
-                          )}
-                        </div>
-                        {appt.practitionerName && (
-                          <div className="truncate text-[9px] text-slate-500">
-                            {appt.practitionerName}
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-
-                  {appts.length === 0 && (
-                    <p className="text-[10px] text-slate-500">
-                      No appointments
-                    </p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  // ----------------------------
-  // Render
-  // ----------------------------
   return (
-    <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
-      {/* Calendar */}
-      <section className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/80 p-4">
-        {/* Header */}
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-[11px] text-slate-400">Calendar</p>
-            <p className="text-sm font-semibold text-slate-50">
-              {monthLabel}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-md border border-slate-700 bg-slate-900 p-0.5 text-[11px]">
-              <button
-                type="button"
-                className={`rounded px-2 py-1 ${
-                  viewMode === "month"
-                    ? "bg-slate-800 text-slate-50"
-                    : "text-slate-400"
-                }`}
-                onClick={() => setViewMode("month")}
-              >
-                Month
-              </button>
-              <button
-                type="button"
-                className={`rounded px-2 py-1 ${
-                  viewMode === "week"
-                    ? "bg-slate-800 text-slate-50"
-                    : "text-slate-400"
-                }`}
-                onClick={() => setViewMode("week")}
-              >
-                Week
-              </button>
-            </div>
-
-            <div className="inline-flex items-center gap-1 text-[11px]">
-              <button
-                type="button"
-                onClick={goPrev}
-                className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200 hover:border-slate-500"
-              >
-                ◀
-              </button>
-              <button
-                type="button"
-                onClick={goToday}
-                className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200 hover:border-slate-500"
-              >
-                Today
-              </button>
-              <button
-                type="button"
-                onClick={goNext}
-                className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-slate-200 hover:border-slate-500"
-              >
-                ▶
-              </button>
-            </div>
-          </div>
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 overflow-hidden">
+      <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
+        <div>
+          <p className="text-[12px] text-slate-400">Calendar</p>
+          <p className="text-[14px] font-semibold text-slate-100">{monthTitle(monthDate)}</p>
         </div>
-
-        {viewMode === "month" ? renderMonthView() : renderWeekView()}
-
-        {/* Legend */}
-        <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px] text-slate-400">
-          <div className="flex items-center gap-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            <span>Confirmed</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-            <span>Pending</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
-            <span>Cancelled</span>
-          </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onChangeMonthKey(toKey(addMonths(monthDate, -1)))}
+            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
+          >
+            Prev
+          </button>
+          <button
+            onClick={() => onChangeMonthKey(toKey(addMonths(monthDate, 1)))}
+            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
+          >
+            Next
+          </button>
         </div>
-      </section>
+      </div>
 
-      {/* Appointment Details */}
-      <aside className="space-y-3 rounded-xl border border-slate-800 bg-slate-950/80 p-4 text-xs text-slate-200">
-        <p className="text-[11px] font-semibold text-slate-100">
-          Appointment details
-        </p>
+      <div className="grid grid-cols-7 border-b border-slate-800 bg-slate-900/40">
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+          <div key={d} className="px-3 py-2 text-[11px] text-slate-400">
+            {d}
+          </div>
+        ))}
+      </div>
 
-        {!selected && (
-          <p className="text-[11px] text-slate-400">
-            Click an appointment on the calendar to view details here.
-          </p>
-        )}
+      <div className="grid grid-cols-7">
+        {days.map((d) => {
+          const k = toKey(d);
+          const isSelected = k === selectedDateKey;
+          const inMonth = sameMonth(d, monthDate);
+          const list = apptsByDay.get(k) || [];
+          const show = list.slice(0, 3);
+          const more = list.length - show.length;
 
-        {selected && (
-          <div className="space-y-2 rounded-lg border border-slate-800 bg-slate-900 p-3">
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-800 text-[11px] font-semibold text-slate-50">
-                {getInitials(selected.patientName)}
-              </span>
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-slate-50">
-                  {selected.patientName || "Patient"}
-                </p>
-                {selected.practitionerName && (
-                  <p className="text-[11px] text-slate-400">
-                    With {selected.practitionerName}
-                  </p>
+          return (
+            <div
+              key={k}
+              className={`min-h-[92px] border-t border-slate-900/60 border-r border-slate-900/60 p-2 ${
+                inMonth ? "bg-slate-950/40" : "bg-slate-950/20 opacity-70"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onSelectDateKey(k)}
+                className={`flex w-full items-center justify-between rounded-lg px-2 py-1 text-[11px] ${
+                  isSelected
+                    ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                    : "border border-transparent text-slate-300 hover:bg-slate-900/40"
+                }`}
+              >
+                <span className="font-semibold">{d.getDate()}</span>
+                {list.length > 0 && (
+                  <span className="rounded-full border border-slate-700 bg-slate-950/40 px-2 py-[1px] text-[10px] text-slate-200">
+                    {list.length}
+                  </span>
+                )}
+              </button>
+
+              <div className="mt-2 space-y-1">
+                {show.map((a) => {
+                  const patientName =
+                    a?.patient?.full_name ||
+                    a?.patient_name ||
+                    a?.full_name ||
+                    a?.patient_full_name ||
+                    "Patient";
+                  const start = a?.starts_at || a?.start || a?.startsAt;
+                  const t = new Date(start);
+                  const time = Number.isNaN(t.getTime())
+                    ? ""
+                    : t.toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" });
+
+                  return (
+                    <button
+                      key={a?.id || `${start}_${patientName}`}
+                      type="button"
+                      onClick={() => onSelectAppointment(a)}
+                      className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-left text-[11px] text-slate-200 hover:border-slate-600"
+                      title={patientName}
+                    >
+                      <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-700 bg-slate-950/40 text-[10px]">
+                        {initials(patientName)}
+                      </span>
+                      <span className="text-slate-400">{time}</span>{" "}
+                      <span className="font-semibold text-slate-100">{initials(patientName)}</span>
+                    </button>
+                  );
+                })}
+
+                {more > 0 && (
+                  <div className="text-[10px] text-slate-500 px-2">+{more} more</div>
                 )}
               </div>
-              {selected.status && (
-                <span className="rounded-full border border-slate-700 bg-slate-950 px-2 py-0.5 text-[10px] text-slate-200">
-                  {selected.status}
-                </span>
-              )}
             </div>
-
-            <div className="space-y-1 text-[11px] text-slate-300">
-              <div>
-                <span className="text-slate-400">Date: </span>
-                <span>
-                  {selected.date &&
-                    (() => {
-                      const d = parseDateKey(selected.date);
-                      return d.toLocaleDateString("en-GB", {
-                        weekday: "short",
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      });
-                    })()}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400">Time: </span>
-                <span>
-                  {selected.startTime || "—"}
-                  {selected.endTime ? `–${selected.endTime}` : ""}
-                </span>
-              </div>
-            </div>
-
-            {selected.notes && (
-              <div className="mt-1 rounded-md border border-slate-800 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-300">
-                <span className="text-slate-400">Notes: </span>
-                <span>{selected.notes}</span>
-              </div>
-            )}
-
-            <p className="mt-2 text-[10px] text-slate-500">
-              Later we can link this panel to a full patient profile or add
-              quick actions like reschedule / cancel.
-            </p>
-          </div>
-        )}
-      </aside>
+          );
+        })}
+      </div>
     </div>
   );
 }
