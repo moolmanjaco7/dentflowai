@@ -1,12 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/whatsapp/queue-reminders?key=${WHATSAPP_QUEUE_SECRET}",
+      "path": "/api/whatsapp/daily-run?key=${WHATSAPP_DAILY_SECRET}",
       "schedule": "0 14 * * *"
-    },
-    {
-      "path": "/api/whatsapp/send-queued?key=${WHATSAPP_SEND_SECRET}&limit=50",
-      "schedule": "*/10 * * * *"
     }
   ]
 }
