@@ -38,7 +38,8 @@ async function fetchJson(url, options) {
 }
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState("month");
+  // ✅ FORCE MONTH VIEW DEFAULT
+  const [activeView, setActiveView] = useState("month"); // month | day
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -47,11 +48,10 @@ export default function DashboardPage() {
   const [monthKey, setMonthKey] = useState(toKey(new Date()));
 
   const [selectedAppt, setSelectedAppt] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null); // { type, appt }
 
   const [waStats, setWaStats] = useState({ queuedTotal: 0, sentToday: 0, failedToday: 0 });
   const [waStatsError, setWaStatsError] = useState("");
-
-  const [confirmAction, setConfirmAction] = useState(null); // { type: 'confirm'|'cancel', apptId }
 
   async function loadAppointments() {
     setLoading(true);
@@ -125,14 +125,11 @@ export default function DashboardPage() {
   }, [selectedDateKey]);
 
   function updateApptInState(updated) {
-    setAppointments((prev) =>
-      (prev || []).map((a) => (a.id === updated.id ? { ...a, ...updated } : a))
-    );
+    setAppointments((prev) => (prev || []).map((a) => (a.id === updated.id ? { ...a, ...updated } : a)));
     if (selectedAppt?.id === updated.id) setSelectedAppt((p) => ({ ...p, ...updated }));
   }
 
   async function setAppointmentStatus(appt, mode) {
-    // mode: 'confirm' | 'cancel'
     const key = process.env.NEXT_PUBLIC_APPT_UPDATE_KEY;
     const url = key
       ? `/api/appointments/update-status?key=${encodeURIComponent(key)}`
@@ -163,7 +160,7 @@ export default function DashboardPage() {
         <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Dashboard</h1>
-            <p className="text-xs text-slate-400">Calendar + appointments + WhatsApp pipeline.</p>
+            <p className="text-xs text-slate-400">Month calendar view (click appointments for details).</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -185,23 +182,28 @@ export default function DashboardPage() {
           </div>
         </header>
 
+        {/* View toggle */}
         <div className="flex items-center gap-2">
-          {[
-            { k: "month", label: "Month" },
-            { k: "day", label: "Day" },
-          ].map((t) => (
-            <button
-              key={t.k}
-              onClick={() => setActiveTab(t.k)}
-              className={`rounded-xl border px-3 py-2 text-[12px] ${
-                activeTab === t.k
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                  : "border-slate-800 bg-slate-900 text-slate-200 hover:border-slate-600"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
+          <button
+            onClick={() => setActiveView("month")}
+            className={`rounded-xl border px-3 py-2 text-[12px] ${
+              activeView === "month"
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                : "border-slate-800 bg-slate-900 text-slate-200 hover:border-slate-600"
+            }`}
+          >
+            Month
+          </button>
+          <button
+            onClick={() => setActiveView("day")}
+            className={`rounded-xl border px-3 py-2 text-[12px] ${
+              activeView === "day"
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                : "border-slate-800 bg-slate-900 text-slate-200 hover:border-slate-600"
+            }`}
+          >
+            Day
+          </button>
         </div>
 
         {(error || waStatsError) && (
@@ -211,8 +213,9 @@ export default function DashboardPage() {
         )}
 
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr),minmax(0,0.6fr)]">
+          {/* Left: Month calendar always available */}
           <div className="space-y-4">
-            {activeTab === "month" ? (
+            {activeView === "month" ? (
               <DashboardCalendar
                 appointments={appointments}
                 monthKey={monthKey}
@@ -220,7 +223,7 @@ export default function DashboardPage() {
                 selectedDateKey={selectedDateKey}
                 onSelectDateKey={(k) => {
                   setSelectedDateKey(k);
-                  setActiveTab("day");
+                  // keep month view, but you can switch to day if you want
                 }}
                 onSelectAppointment={(a) => setSelectedAppt(a)}
               />
@@ -294,10 +297,11 @@ export default function DashboardPage() {
             )}
           </div>
 
+          {/* Right: side cards */}
           <div className="space-y-4">
             <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
               <p className="text-[12px] font-semibold text-slate-100">WhatsApp pipeline</p>
-              <p className="mt-1 text-[12px] text-slate-400">Cron will queue + send automatically.</p>
+              <p className="mt-1 text-[12px] text-slate-400">Cron queues + sends automatically.</p>
 
               <div className="mt-3 grid grid-cols-3 gap-2">
                 <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
@@ -312,11 +316,6 @@ export default function DashboardPage() {
                   <p className="text-[10px] text-slate-400">Failed today</p>
                   <p className="text-lg font-semibold">{waStats.failedToday}</p>
                 </div>
-              </div>
-
-              <div className="mt-3 text-[11px] text-slate-500 space-y-1">
-                <div className="font-mono">/api/whatsapp/queue-reminders</div>
-                <div className="font-mono">/api/whatsapp/send-queued</div>
               </div>
             </div>
 
@@ -340,7 +339,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Modal */}
+        {/* Appointment modal */}
         {selectedAppt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
             <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-950">
@@ -424,7 +423,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Are you sure modal */}
+        {/* Are you sure */}
         {confirmAction && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
             <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-4">
