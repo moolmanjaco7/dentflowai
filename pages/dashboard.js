@@ -176,6 +176,9 @@ export default function DashboardPage() {
           onSelectDateKey={(k) => setSelectedDateKey(k)}
           onSelectAppointment={(a) => setSelectedAppt(a)}
         />
+<p className="text-[10px] text-slate-600">
+  Build: {process.env.NEXT_PUBLIC_BUILD_ID || "no-build-id"}
+</p>
 
         {/* Day list under calendar */}
         <div className="rounded-2xl border border-slate-800 bg-slate-950/70 overflow-hidden">
