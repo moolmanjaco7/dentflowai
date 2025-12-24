@@ -1,6 +1,12 @@
 {
   "crons": [
-    { "path": "/api/recalls/sweep?token=%CRON_SECRET%", "schedule": "0 7 * * *" },
-    { "path": "/api/recalls/send-queued?token=%CRON_SECRET%", "schedule": "5 7 * * *" }
+    {
+      "path": "/api/whatsapp/queue-reminders?key=${WHATSAPP_QUEUE_SECRET}",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/whatsapp/send-queued?key=${WHATSAPP_SEND_SECRET}&limit=50",
+      "schedule": "*/10 * * * *"
+    }
   ]
 }
