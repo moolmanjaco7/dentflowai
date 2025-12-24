@@ -11,7 +11,6 @@ function toKey(d) {
 }
 
 function fromKey(key) {
-  // key: YYYY-MM-DD
   const [y, m, d] = String(key).split("-").map(Number);
   return new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
 }
@@ -37,7 +36,6 @@ function monthTitle(date) {
 }
 
 function startOfMonthGrid(date) {
-  // Monday-start week
   const d = new Date(date.getFullYear(), date.getMonth(), 1);
   const day = d.getDay(); // Sun=0
   const mondayIndex = (day + 6) % 7; // Mon=0..Sun=6
@@ -50,6 +48,16 @@ function sameMonth(a, b) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
 }
 
+function statusBadgeClass(appt) {
+  const status = (appt?.status || "").toLowerCase();
+  const conf = (appt?.confirmation_status || "").toLowerCase();
+
+  if (status === "cancelled" || conf === "cancelled") return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+  if (status === "completed") return "border-slate-600 bg-slate-900/40 text-slate-200";
+  if (status === "confirmed" || conf === "confirmed") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  return "border-amber-500/30 bg-amber-500/10 text-amber-200"; // booked/unconfirmed
+}
+
 export default function DashboardCalendar({
   appointments = [],
   monthKey,
@@ -59,7 +67,6 @@ export default function DashboardCalendar({
   onSelectAppointment,
 }) {
   const monthDate = useMemo(() => fromKey(monthKey || toKey(new Date())), [monthKey]);
-
   const gridStart = useMemo(() => startOfMonthGrid(monthDate), [monthDate]);
 
   const apptsByDay = useMemo(() => {
@@ -71,7 +78,6 @@ export default function DashboardCalendar({
       if (!map.has(k)) map.set(k, []);
       map.get(k).push(a);
     }
-    // sort each day by time
     for (const [k, arr] of map.entries()) {
       arr.sort((x, y) => new Date(x.starts_at).getTime() - new Date(y.starts_at).getTime());
       map.set(k, arr);
@@ -161,6 +167,7 @@ export default function DashboardCalendar({
                     a?.full_name ||
                     a?.patient_full_name ||
                     "Patient";
+
                   const start = a?.starts_at || a?.start || a?.startsAt;
                   const t = new Date(start);
                   const time = Number.isNaN(t.getTime())
@@ -175,18 +182,25 @@ export default function DashboardCalendar({
                       className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-left text-[11px] text-slate-200 hover:border-slate-600"
                       title={patientName}
                     >
-                      <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-700 bg-slate-950/40 text-[10px]">
-                        {initials(patientName)}
-                      </span>
-                      <span className="text-slate-400">{time}</span>{" "}
-                      <span className="font-semibold text-slate-100">{initials(patientName)}</span>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-700 bg-slate-950/40 text-[10px] shrink-0">
+                            {initials(patientName)}
+                          </span>
+                          <span className="text-slate-400 shrink-0">{time}</span>
+                        </div>
+
+                        <span className={`rounded-full border px-2 py-[1px] text-[10px] ${statusBadgeClass(a)}`}>
+                          {((a?.status || "booked") === "confirmed" || (a?.confirmation_status || "") === "confirmed")
+                            ? "confirmed"
+                            : (a?.status || "booked")}
+                        </span>
+                      </div>
                     </button>
                   );
                 })}
 
-                {more > 0 && (
-                  <div className="text-[10px] text-slate-500 px-2">+{more} more</div>
-                )}
+                {more > 0 && <div className="text-[10px] text-slate-500 px-2">+{more} more</div>}
               </div>
             </div>
           );

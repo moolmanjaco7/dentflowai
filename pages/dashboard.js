@@ -31,14 +31,14 @@ function initials(name) {
   return (a + b).toUpperCase();
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url, { cache: "no-store" });
+async function fetchJson(url, options) {
+  const res = await fetch(url, { cache: "no-store", ...(options || {}) });
   const json = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, json };
 }
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState("month"); // day | month
+  const [activeTab, setActiveTab] = useState("month");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -50,6 +50,8 @@ export default function DashboardPage() {
 
   const [waStats, setWaStats] = useState({ queuedTotal: 0, sentToday: 0, failedToday: 0 });
   const [waStatsError, setWaStatsError] = useState("");
+
+  const [confirmAction, setConfirmAction] = useState(null); // { type: 'confirm'|'cancel', apptId }
 
   async function loadAppointments() {
     setLoading(true);
@@ -91,10 +93,8 @@ export default function DashboardPage() {
 
   async function loadWhatsAppStats() {
     setWaStatsError("");
-    // if you added WHATSAPP_STATS_SECRET, set NEXT_PUBLIC_WHATSAPP_STATS_KEY in Vercel and use it here
     const key = process.env.NEXT_PUBLIC_WHATSAPP_STATS_KEY;
     const url = key ? `/api/whatsapp/stats?key=${encodeURIComponent(key)}` : "/api/whatsapp/stats";
-
     const { ok, json } = await fetchJson(url);
     if (!ok) {
       setWaStatsError(json?.error || "Could not load WhatsApp stats.");
@@ -124,6 +124,39 @@ export default function DashboardPage() {
     return d.toLocaleDateString("en-ZA", { weekday: "long", year: "numeric", month: "short", day: "numeric" });
   }, [selectedDateKey]);
 
+  function updateApptInState(updated) {
+    setAppointments((prev) =>
+      (prev || []).map((a) => (a.id === updated.id ? { ...a, ...updated } : a))
+    );
+    if (selectedAppt?.id === updated.id) setSelectedAppt((p) => ({ ...p, ...updated }));
+  }
+
+  async function setAppointmentStatus(appt, mode) {
+    // mode: 'confirm' | 'cancel'
+    const key = process.env.NEXT_PUBLIC_APPT_UPDATE_KEY;
+    const url = key
+      ? `/api/appointments/update-status?key=${encodeURIComponent(key)}`
+      : "/api/appointments/update-status";
+
+    const body =
+      mode === "confirm"
+        ? { appointment_id: appt.id, status: "confirmed", confirmation_status: "confirmed" }
+        : { appointment_id: appt.id, status: "cancelled", confirmation_status: "cancelled" };
+
+    const { ok, json } = await fetchJson(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!ok) {
+      alert(json?.error || "Could not update appointment.");
+      return;
+    }
+
+    updateApptInState(json.appointment);
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50 p-6">
       <div className="mx-auto max-w-6xl space-y-4">
@@ -152,7 +185,6 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Tabs */}
         <div className="flex items-center gap-2">
           {[
             { k: "month", label: "Month" },
@@ -179,7 +211,6 @@ export default function DashboardPage() {
         )}
 
         <section className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr),minmax(0,0.6fr)]">
-          {/* Main */}
           <div className="space-y-4">
             {activeTab === "month" ? (
               <DashboardCalendar
@@ -263,9 +294,7 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Side cards */}
           <div className="space-y-4">
-            {/* WhatsApp status card */}
             <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
               <p className="text-[12px] font-semibold text-slate-100">WhatsApp pipeline</p>
               <p className="mt-1 text-[12px] text-slate-400">Cron will queue + send automatically.</p>
@@ -311,7 +340,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Appointment modal */}
+        {/* Modal */}
         {selectedAppt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
             <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-950">
@@ -325,7 +354,7 @@ export default function DashboardPage() {
                 </button>
               </div>
 
-              <div className="p-4 text-[12px] text-slate-200 space-y-2">
+              <div className="p-4 text-[12px] text-slate-200 space-y-3">
                 {(() => {
                   const a = selectedAppt;
                   const patientName =
@@ -336,6 +365,7 @@ export default function DashboardPage() {
                     "Patient";
                   const starts = a?.starts_at || a?.start || a?.startsAt;
                   const ends = a?.ends_at || a?.end || a?.endsAt;
+
                   return (
                     <>
                       <div className="flex items-center gap-3">
@@ -365,6 +395,21 @@ export default function DashboardPage() {
                         </div>
                       </div>
 
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setConfirmAction({ type: "confirm", appt: a })}
+                          className="flex-1 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-[12px] font-semibold text-emerald-200 hover:border-emerald-400"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => setConfirmAction({ type: "cancel", appt: a })}
+                          className="flex-1 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-[12px] font-semibold text-rose-200 hover:border-rose-400"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+
                       {a?.notes && (
                         <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
                           <p className="text-slate-400 mb-1">Notes</p>
@@ -374,6 +419,43 @@ export default function DashboardPage() {
                     </>
                   );
                 })()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Are you sure modal */}
+        {confirmAction && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+            <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-4">
+              <p className="text-[14px] font-semibold text-slate-100">Are you sure?</p>
+              <p className="mt-2 text-[12px] text-slate-400">
+                {confirmAction.type === "confirm"
+                  ? "This will mark the appointment as CONFIRMED."
+                  : "This will CANCEL the appointment."}
+              </p>
+
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => setConfirmAction(null)}
+                  className="flex-1 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-[12px] text-slate-200 hover:border-slate-600"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={async () => {
+                    const { type, appt } = confirmAction;
+                    setConfirmAction(null);
+                    await setAppointmentStatus(appt, type);
+                  }}
+                  className={`flex-1 rounded-xl border px-4 py-3 text-[12px] font-semibold ${
+                    confirmAction.type === "confirm"
+                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400"
+                      : "border-rose-500/40 bg-rose-500/10 text-rose-200 hover:border-rose-400"
+                  }`}
+                >
+                  Yes
+                </button>
               </div>
             </div>
           </div>
