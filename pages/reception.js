@@ -31,6 +31,29 @@ function initials(name) {
   return (a + b).toUpperCase();
 }
 
+function normalize(s) {
+  return String(s || "").toLowerCase().trim();
+}
+
+function statusLabel(appt) {
+  const status = normalize(appt?.status);
+  const conf = normalize(appt?.confirmation_status);
+
+  if (status === "cancelled" || conf === "cancelled") return { label: "cancelled", tone: "rose" };
+  if (status === "completed") return { label: "completed", tone: "slate" };
+  if (status === "no_show") return { label: "no-show", tone: "violet" };
+  if (status === "confirmed" || conf === "confirmed") return { label: "confirmed", tone: "emerald" };
+  return { label: "booked", tone: "amber" };
+}
+
+function badgeClass(tone) {
+  if (tone === "rose") return "border-rose-500/30 bg-rose-500/10 text-rose-200";
+  if (tone === "emerald") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  if (tone === "violet") return "border-violet-500/30 bg-violet-500/10 text-violet-200";
+  if (tone === "slate") return "border-slate-600 bg-slate-900/40 text-slate-200";
+  return "border-amber-500/30 bg-amber-500/10 text-amber-200";
+}
+
 async function fetchJson(url, options) {
   const res = await fetch(url, { cache: "no-store", ...(options || {}) });
   const json = await res.json().catch(() => ({}));
@@ -47,13 +70,18 @@ export default function ReceptionCalendarPage() {
   const [monthKey, setMonthKey] = useState(toKey(new Date()));
 
   const [selectedAppt, setSelectedAppt] = useState(null);
-  const [confirmAction, setConfirmAction] = useState(null); // { type: "confirm"|"cancel", appt }
+
+  // Search for day list
+  const [search, setSearch] = useState("");
+
+  // confirm modal state for actions
+  const [confirmAction, setConfirmAction] = useState(null);
+  // { type: "confirm"|"cancel"|"complete"|"no_show", appt }
 
   async function loadAppointments() {
     setLoading(true);
     setError("");
 
-    // Same fallback logic as dashboard
     const candidates = ["/api/appointments/list", "/api/appointments", "/api/appointments/all"];
     let found = null;
 
@@ -98,6 +126,37 @@ export default function ReceptionCalendarPage() {
     return (appointments || []).filter((a) => toKey(a?.starts_at || a?.start || a?.startsAt) === k);
   }, [appointments, selectedDateKey]);
 
+  const filteredDayAppointments = useMemo(() => {
+    const q = normalize(search);
+    if (!q) return dayAppointments;
+
+    return (dayAppointments || []).filter((a) => {
+      const patientName =
+        a?.patient?.full_name ||
+        a?.patient_name ||
+        a?.full_name ||
+        a?.patient_full_name ||
+        "";
+
+      const phone =
+        a?.patient?.phone ||
+        a?.phone ||
+        a?.patient_phone ||
+        "";
+
+      const email =
+        a?.patient?.email ||
+        a?.email ||
+        a?.patient_email ||
+        "";
+
+      const init = initials(patientName);
+
+      const hay = normalize(`${patientName} ${phone} ${email} ${init}`);
+      return hay.includes(q);
+    });
+  }, [dayAppointments, search]);
+
   const selectedDayLabel = useMemo(() => {
     const d = new Date(selectedDateKey);
     if (Number.isNaN(d.getTime())) return "Selected day";
@@ -120,10 +179,12 @@ export default function ReceptionCalendarPage() {
       ? `/api/appointments/update-status?key=${encodeURIComponent(key)}`
       : "/api/appointments/update-status";
 
-    const body =
-      mode === "confirm"
-        ? { appointment_id: appt.id, status: "confirmed", confirmation_status: "confirmed" }
-        : { appointment_id: appt.id, status: "cancelled", confirmation_status: "cancelled" };
+    let body;
+    if (mode === "confirm") body = { appointment_id: appt.id, status: "confirmed", confirmation_status: "confirmed" };
+    else if (mode === "cancel") body = { appointment_id: appt.id, status: "cancelled", confirmation_status: "cancelled" };
+    else if (mode === "complete") body = { appointment_id: appt.id, status: "completed" };
+    else if (mode === "no_show") body = { appointment_id: appt.id, status: "no_show" };
+    else body = { appointment_id: appt.id };
 
     const { ok, json } = await fetchJson(url, {
       method: "POST",
@@ -145,7 +206,7 @@ export default function ReceptionCalendarPage() {
         <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Reception</h1>
-            <p className="text-xs text-slate-400">Month calendar + clickable appointments.</p>
+            <p className="text-xs text-slate-400">Month calendar + search + status actions.</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -188,32 +249,52 @@ export default function ReceptionCalendarPage() {
               onSelectAppointment={(a) => setSelectedAppt(a)}
             />
 
-            {/* Day list */}
+            {/* Day list + search */}
             <div className="rounded-2xl border border-slate-800 bg-slate-950/70 overflow-hidden">
-              <div className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
-                <div>
-                  <p className="text-[12px] text-slate-400">Day view</p>
-                  <p className="text-[14px] font-semibold text-slate-100">{selectedDayLabel}</p>
+              <div className="border-b border-slate-800 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[12px] text-slate-400">Day view</p>
+                    <p className="text-[14px] font-semibold text-slate-100">{selectedDayLabel}</p>
+                  </div>
+
+                  <input
+                    type="date"
+                    value={selectedDateKey}
+                    onChange={(e) => setSelectedDateKey(e.target.value)}
+                    className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none"
+                  />
                 </div>
-                <input
-                  type="date"
-                  value={selectedDateKey}
-                  onChange={(e) => setSelectedDateKey(e.target.value)}
-                  className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none"
-                />
+
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="Search name / initials / phone / email..."
+                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none placeholder:text-slate-500"
+                  />
+                  <button
+                    onClick={() => setSearch("")}
+                    className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
+                  >
+                    Clear
+                  </button>
+                </div>
               </div>
 
               <div className="p-4">
                 {loading ? (
                   <p className="text-sm text-slate-400">Loading appointments…</p>
-                ) : dayAppointments.length === 0 ? (
+                ) : filteredDayAppointments.length === 0 ? (
                   <div className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-4">
-                    <p className="text-[13px] font-semibold text-slate-100">No appointments</p>
-                    <p className="mt-1 text-[12px] text-slate-400">Use “Create booking” to add one.</p>
+                    <p className="text-[13px] font-semibold text-slate-100">No matching appointments</p>
+                    <p className="mt-1 text-[12px] text-slate-400">
+                      Try clearing the search or select another day.
+                    </p>
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {dayAppointments
+                    {filteredDayAppointments
                       .slice()
                       .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime())
                       .map((a) => {
@@ -225,6 +306,7 @@ export default function ReceptionCalendarPage() {
                           "Patient";
                         const starts = a?.starts_at || a?.start || a?.startsAt;
                         const ends = a?.ends_at || a?.end || a?.endsAt;
+                        const st = statusLabel(a);
 
                         return (
                           <button
@@ -232,20 +314,20 @@ export default function ReceptionCalendarPage() {
                             onClick={() => setSelectedAppt(a)}
                             className="w-full text-left flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900 px-3 py-3 hover:border-slate-600"
                           >
-                            <div className="flex items-center gap-3">
-                              <div className="h-9 w-9 rounded-xl border border-slate-700 bg-slate-950/40 flex items-center justify-center text-[12px] text-slate-100">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="h-9 w-9 rounded-xl border border-slate-700 bg-slate-950/40 flex items-center justify-center text-[12px] text-slate-100 shrink-0">
                                 {initials(patientName)}
                               </div>
-                              <div>
-                                <p className="text-[13px] font-semibold text-slate-100">{patientName}</p>
+                              <div className="min-w-0">
+                                <p className="text-[13px] font-semibold text-slate-100 truncate">{patientName}</p>
                                 <p className="text-[11px] text-slate-500">
                                   {timeLabel(starts)} – {timeLabel(ends)}
                                 </p>
                               </div>
                             </div>
 
-                            <span className="rounded-full border border-slate-700 bg-slate-950/40 px-2 py-1 text-[11px] text-slate-200">
-                              {a?.status || "booked"}
+                            <span className={`rounded-full border px-2 py-1 text-[11px] ${badgeClass(st.tone)}`}>
+                              {st.label}
                             </span>
                           </button>
                         );
@@ -259,17 +341,23 @@ export default function ReceptionCalendarPage() {
           {/* Side info */}
           <div className="space-y-4">
             <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-              <p className="text-[12px] font-semibold text-slate-100">Tips</p>
-              <ul className="mt-2 space-y-2 text-[12px] text-slate-400">
-                <li>• Click any appointment in the month view to open details.</li>
-                <li>• Use Confirm / Cancel to update status instantly.</li>
-                <li>• “Create booking” stays on your existing reception booking page.</li>
-              </ul>
+              <p className="text-[12px] font-semibold text-slate-100">Legend</p>
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+                <span className={`rounded-full border px-2 py-1 ${badgeClass("amber")}`}>booked</span>
+                <span className={`rounded-full border px-2 py-1 ${badgeClass("emerald")}`}>confirmed</span>
+                <span className={`rounded-full border px-2 py-1 ${badgeClass("rose")}`}>cancelled</span>
+                <span className={`rounded-full border px-2 py-1 ${badgeClass("slate")}`}>completed</span>
+                <span className={`rounded-full border px-2 py-1 ${badgeClass("violet")}`}>no-show</span>
+              </div>
+
+              <p className="mt-3 text-[12px] text-slate-400">
+                Click any appointment (calendar or list) to open details and update status.
+              </p>
             </div>
           </div>
         </section>
 
-        {/* Appointment details modal */}
+        {/* Appointment modal */}
         {selectedAppt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
             <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-950">
@@ -294,6 +382,7 @@ export default function ReceptionCalendarPage() {
                     "Patient";
                   const starts = a?.starts_at || a?.start || a?.startsAt;
                   const ends = a?.ends_at || a?.end || a?.endsAt;
+                  const st = statusLabel(a);
 
                   return (
                     <>
@@ -301,12 +390,15 @@ export default function ReceptionCalendarPage() {
                         <div className="h-10 w-10 rounded-xl border border-slate-700 bg-slate-900 flex items-center justify-center text-[13px] font-semibold">
                           {initials(patientName)}
                         </div>
-                        <div>
-                          <p className="text-[14px] font-semibold text-slate-100">{patientName}</p>
+                        <div className="min-w-0">
+                          <p className="text-[14px] font-semibold text-slate-100 truncate">{patientName}</p>
                           <p className="text-[11px] text-slate-500">
                             {timeLabel(starts)} – {timeLabel(ends)}
                           </p>
                         </div>
+                        <span className={`ml-auto rounded-full border px-2 py-1 text-[11px] ${badgeClass(st.tone)}`}>
+                          {st.label}
+                        </span>
                       </div>
 
                       <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 space-y-1">
@@ -320,18 +412,30 @@ export default function ReceptionCalendarPage() {
                         </div>
                       </div>
 
-                      <div className="flex gap-2">
+                      <div className="grid grid-cols-2 gap-2">
                         <button
                           onClick={() => setConfirmAction({ type: "confirm", appt: a })}
-                          className="flex-1 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-[12px] font-semibold text-emerald-200 hover:border-emerald-400"
+                          className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-[12px] font-semibold text-emerald-200 hover:border-emerald-400"
                         >
                           Confirm
                         </button>
                         <button
                           onClick={() => setConfirmAction({ type: "cancel", appt: a })}
-                          className="flex-1 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-[12px] font-semibold text-rose-200 hover:border-rose-400"
+                          className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-[12px] font-semibold text-rose-200 hover:border-rose-400"
                         >
                           Cancel
+                        </button>
+                        <button
+                          onClick={() => setConfirmAction({ type: "complete", appt: a })}
+                          className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-[12px] font-semibold text-slate-100 hover:border-slate-500"
+                        >
+                          Mark Completed
+                        </button>
+                        <button
+                          onClick={() => setConfirmAction({ type: "no_show", appt: a })}
+                          className="rounded-xl border border-violet-500/40 bg-violet-500/10 px-4 py-3 text-[12px] font-semibold text-violet-200 hover:border-violet-400"
+                        >
+                          No-show
                         </button>
                       </div>
 
@@ -355,9 +459,10 @@ export default function ReceptionCalendarPage() {
             <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-4">
               <p className="text-[14px] font-semibold text-slate-100">Are you sure?</p>
               <p className="mt-2 text-[12px] text-slate-400">
-                {confirmAction.type === "confirm"
-                  ? "This will mark the appointment as CONFIRMED."
-                  : "This will CANCEL the appointment."}
+                {confirmAction.type === "confirm" && "This will mark the appointment as CONFIRMED."}
+                {confirmAction.type === "cancel" && "This will CANCEL the appointment."}
+                {confirmAction.type === "complete" && "This will mark the appointment as COMPLETED."}
+                {confirmAction.type === "no_show" && "This will mark the appointment as NO-SHOW."}
               </p>
 
               <div className="mt-4 flex gap-2">
@@ -373,11 +478,7 @@ export default function ReceptionCalendarPage() {
                     setConfirmAction(null);
                     await setAppointmentStatus(appt, type);
                   }}
-                  className={`flex-1 rounded-xl border px-4 py-3 text-[12px] font-semibold ${
-                    confirmAction.type === "confirm"
-                      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:border-emerald-400"
-                      : "border-rose-500/40 bg-rose-500/10 text-rose-200 hover:border-rose-400"
-                  }`}
+                  className="flex-1 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-[12px] font-semibold text-slate-100 hover:border-slate-500"
                 >
                   Yes
                 </button>
