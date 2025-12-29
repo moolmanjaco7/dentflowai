@@ -28,12 +28,14 @@ export default async function handler(req, res) {
 
     // Create clinic row (adjust columns if your clinics table differs)
     const insertClinic = {
-      name: clinic_name,
-      open_time,
-      close_time,
-      practitioners_count: Number(practitioners_count || 1),
-      created_at: new Date().toISOString(),
-    };
+  name: clinic_name,
+  owner_email: user.email, // ✅ FIX
+  open_time,
+  close_time,
+  practitioners_count: Number(practitioners_count || 1),
+  created_at: new Date().toISOString(),
+};
+
 
     const { data: clinic, error: cErr } = await admin
       .from("clinics")
