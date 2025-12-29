@@ -1,7 +1,7 @@
 // pages/auth/signup.js
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { supabase } from "../../lib/supabaseClient";
+import { createClient } from "@supabase/supabase-js";
 
 export default function SignupPage() {
   const [loading, setLoading] = useState(false);
@@ -11,10 +11,22 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  const supabase = useMemo(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !anon) return null;
+    return createClient(url, anon);
+  }, []);
+
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
     setMsg("");
+
+    if (!supabase) {
+      setErr("Supabase env vars missing. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Vercel.");
+      return;
+    }
 
     if (!email || !password) {
       setErr("Please enter email and password.");
@@ -22,6 +34,7 @@ export default function SignupPage() {
     }
 
     setLoading(true);
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
