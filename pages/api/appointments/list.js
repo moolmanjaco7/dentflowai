@@ -1,4 +1,4 @@
-// pages/api/patients/list.js
+// pages/api/appointments/list.js
 import { createClient } from "@supabase/supabase-js";
 
 function getAdminClient() {
@@ -40,53 +40,46 @@ export default async function handler(req, res) {
 
     const clinicId = ctx.clinic_id;
 
-    // Patients for this clinic
-    const { data: patients, error: patErr } = await admin
-      .from("patients")
-      .select("id, clinic_id, full_name, email, phone, created_at, patient_code, date_of_birth, created_by")
-      .eq("clinic_id", clinicId)
-      .order("created_at", { ascending: false })
-      .limit(500);
+    // Optional range filters
+    const from = req.query.from ? new Date(String(req.query.from)).toISOString() : null;
+    const to = req.query.to ? new Date(String(req.query.to)).toISOString() : null;
 
-    if (patErr) return res.status(400).json({ error: patErr.message });
-
-    const patientIds = (patients || []).map((p) => p.id);
-    if (patientIds.length === 0) {
-      return res.status(200).json({ ok: true, clinic_id: clinicId, patients: [] });
-    }
-
-    // Pull appointments for these patients to compute count + last visit
-    const { data: appts, error: apptErr } = await admin
+    let q = admin
       .from("appointments")
-      .select("id, patient_id, starts_at, status")
+      .select("id, clinic_id, patient_id, starts_at, ends_at, status, confirmation_status, notes, created_at")
       .eq("clinic_id", clinicId)
-      .in("patient_id", patientIds);
+      .order("starts_at", { ascending: false })
+      .limit(1000);
 
+    if (from) q = q.gte("starts_at", from);
+    if (to) q = q.lte("starts_at", to);
+
+    const { data: appts, error: apptErr } = await q;
     if (apptErr) return res.status(400).json({ error: apptErr.message });
 
-    const stats = {};
-    for (const a of appts || []) {
-      const pid = a.patient_id;
-      if (!pid) continue;
-      if (!stats[pid]) stats[pid] = { count: 0, last_visit: null };
-      stats[pid].count += 1;
+    const patientIds = Array.from(new Set((appts || []).map((a) => a.patient_id).filter(Boolean)));
+    let patientsById = {};
 
-      const t = new Date(a.starts_at).getTime();
-      if (!Number.isNaN(t)) {
-        const current = stats[pid].last_visit ? new Date(stats[pid].last_visit).getTime() : -Infinity;
-        if (t > current) stats[pid].last_visit = a.starts_at;
+    if (patientIds.length) {
+      const { data: pats } = await admin
+        .from("patients")
+        .select("id, clinic_id, full_name, email, phone, patient_code, date_of_birth")
+        .eq("clinic_id", clinicId)
+        .in("id", patientIds);
+
+      if (Array.isArray(pats)) {
+        patientsById = Object.fromEntries(pats.map((p) => [p.id, p]));
       }
     }
 
-    const enriched = (patients || []).map((p) => ({
-      ...p,
-      appointment_count: stats[p.id]?.count || 0,
-      last_visit: stats[p.id]?.last_visit || null,
+    const enriched = (appts || []).map((a) => ({
+      ...a,
+      patient: patientsById[a.patient_id] || null,
     }));
 
-    return res.status(200).json({ ok: true, clinic_id: clinicId, patients: enriched });
+    return res.status(200).json({ ok: true, clinic_id: clinicId, appointments: enriched });
   } catch (e) {
-    console.error("api/patients/list error:", e);
+    console.error("api/appointments/list error:", e);
     return res.status(500).json({ error: "Server error" });
   }
 }
