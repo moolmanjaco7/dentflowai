@@ -8,18 +8,48 @@ function getAdminClient() {
   return createClient(url, service);
 }
 
+async function getClinicIdFromBearer(req, admin) {
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Bearer ")) return null;
+
+  const token = authHeader.replace("Bearer ", "").trim();
+  const { data: userData, error: userErr } = await admin.auth.getUser(token);
+  if (userErr || !userData?.user) return null;
+
+  const user = userData.user;
+
+  const { data: profile, error: profErr } = await admin
+    .from("profiles")
+    .select("clinic_id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profErr) return null;
+  return profile?.clinic_id || null;
+}
+
 export default async function handler(req, res) {
   try {
+    // Admin key check (required)
     const expected = process.env.DIAGNOSTICS_SECRET || "";
     const key = String(req.headers["x-admin-key"] || req.query.key || "");
     if (!expected || key !== expected) return res.status(401).json({ error: "Unauthorized" });
 
     const supabase = getAdminClient();
 
+    // Optional: filter diagnostics by clinic if bearer token is supplied
+    const clinicFilterId = await getClinicIdFromBearer(req, supabase);
+
     // Counts (fast)
     const clinicsCountPromise = supabase.from("clinics").select("id", { count: "exact", head: true });
-    const patientsCountPromise = supabase.from("patients").select("id", { count: "exact", head: true });
-    const apptsCountPromise = supabase.from("appointments").select("id", { count: "exact", head: true });
+
+    const patientsCountPromise = clinicFilterId
+      ? supabase.from("patients").select("id", { count: "exact", head: true }).eq("clinic_id", clinicFilterId)
+      : supabase.from("patients").select("id", { count: "exact", head: true });
+
+    const apptsCountPromise = clinicFilterId
+      ? supabase.from("appointments").select("id", { count: "exact", head: true }).eq("clinic_id", clinicFilterId)
+      : supabase.from("appointments").select("id", { count: "exact", head: true });
 
     const [clinicsCountRes, patientsCountRes, apptsCountRes] = await Promise.all([
       clinicsCountPromise,
@@ -31,23 +61,30 @@ export default async function handler(req, res) {
     const patientsCount = patientsCountRes.count ?? null;
     const appointmentsCount = apptsCountRes.count ?? null;
 
-    // Latest appointments
-    const { data: appts, error: apptErr } = await supabase
+    // Latest appointments (filtered if clinicFilterId exists)
+    let apptQuery = supabase
       .from("appointments")
       .select("id, clinic_id, patient_id, starts_at, ends_at, status, notes, created_at, confirmation_status")
       .order("starts_at", { ascending: false })
       .limit(25);
 
+    if (clinicFilterId) apptQuery = apptQuery.eq("clinic_id", clinicFilterId);
+
+    const { data: appts, error: apptErr } = await apptQuery;
     if (apptErr) return res.status(400).json({ error: apptErr.message });
 
     const patientIds = Array.from(new Set((appts || []).map((a) => a.patient_id).filter(Boolean)));
     let patientsById = {};
 
     if (patientIds.length) {
-      const { data: pats, error: patErr } = await supabase
+      let patQuery = supabase
         .from("patients")
-        .select("id, full_name, email, phone, patient_code, created_at")
+        .select("id, clinic_id, full_name, email, phone, patient_code, created_at")
         .in("id", patientIds);
+
+      if (clinicFilterId) patQuery = patQuery.eq("clinic_id", clinicFilterId);
+
+      const { data: pats, error: patErr } = await patQuery;
 
       if (!patErr && Array.isArray(pats)) {
         patientsById = Object.fromEntries(pats.map((p) => [p.id, p]));
@@ -75,6 +112,7 @@ export default async function handler(req, res) {
       ok: true,
       serverTime: new Date().toISOString(),
       env,
+      scope: clinicFilterId ? { mode: "clinic", clinic_id: clinicFilterId } : { mode: "all" },
       counts: { clinicsCount, patientsCount, appointmentsCount },
       latestAppointments,
     });
