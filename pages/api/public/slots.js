@@ -1,92 +1,109 @@
 // pages/api/public/slots.js
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceKey =
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE;
-
-const supabaseAdmin =
-  supabaseUrl && serviceKey
-    ? createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
-    : null;
-
-function buildLocalISO(dateStr, minuteOfDay) {
-  // dateStr: YYYY-MM-DD, minuteOfDay: 0..1439
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const hh = Math.floor(minuteOfDay / 60);
-  const mm = minuteOfDay % 60;
-  // Local time (serverless runs UTC, but Date(y,m,d,hh,mm) creates a "local" date object in runtime tz)
-  // We intentionally construct by components then convert to ISO for consistency.
-  const dt = new Date(y, (m || 1) - 1, d || 1, hh, mm, 0, 0);
-  return dt.toISOString();
+function getAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !service) throw new Error("Missing Supabase env vars");
+  return createClient(url, service);
 }
 
-function overlaps(aStart, aEnd, bStart, bEnd) {
-  return aStart < bEnd && bStart < aEnd;
+async function resolveClinicId(req, admin) {
+  // Supports:
+  // /api/public/slots?clinic=<uuid>
+  // /api/public/slots?slug=<text>
+  const clinic = String(req.query.clinic || "").trim();
+  const slug = String(req.query.slug || "").trim();
+
+  if (clinic) return clinic; // assume uuid string; DB will reject if invalid
+
+  if (slug) {
+    const { data, error } = await admin.from("clinics").select("id").eq("slug", slug).maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data?.id) throw new Error("Clinic not found for slug");
+    return data.id;
+  }
+
+  // fallback (optional)
+  const def = process.env.NEXT_PUBLIC_DEFAULT_CLINIC_ID;
+  if (def) return def;
+
+  throw new Error("Missing clinic. Provide ?clinic=<id> or ?slug=<slug>");
+}
+
+function timeToMinutes(t) {
+  // expects "HH:MM:SS" or "HH:MM"
+  if (!t) return null;
+  const s = String(t);
+  const parts = s.split(":").map((x) => parseInt(x, 10));
+  if (parts.length < 2 || Number.isNaN(parts[0]) || Number.isNaN(parts[1])) return null;
+  return parts[0] * 60 + parts[1];
+}
+
+function minutesToTime(min) {
+  const h = String(Math.floor(min / 60)).padStart(2, "0");
+  const m = String(min % 60).padStart(2, "0");
+  return `${h}:${m}`;
 }
 
 export default async function handler(req, res) {
-  if (!supabaseAdmin) return res.status(500).json({ error: "Supabase admin not configured" });
-
   try {
-    const clinic_id = String(req.query.clinic_id || "").trim();
-    const date = String(req.query.date || "").trim(); // YYYY-MM-DD
+    if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
-    if (!clinic_id || !date) {
-      return res.status(400).json({ error: "Missing clinic_id or date" });
-    }
+    const admin = getAdminClient();
+    const clinicId = await resolveClinicId(req, admin);
 
-    // 1) Get clinic hours
-    const { data: clinic, error: clinicErr } = await supabaseAdmin
+    const date = String(req.query.date || "").trim(); // "YYYY-MM-DD"
+    if (!date) return res.status(400).json({ error: "Missing date" });
+
+    // Get clinic hours
+    const { data: clinic, error: cErr } = await admin
       .from("clinics")
-      .select("id, open_minute, close_minute, slot_minutes")
-      .eq("id", clinic_id)
+      .select("id, open_time, close_time")
+      .eq("id", clinicId)
       .single();
 
-    if (clinicErr) return res.status(500).json({ error: clinicErr.message });
+    if (cErr) return res.status(400).json({ error: cErr.message });
 
-    const openMin = Number.isFinite(clinic?.open_minute) ? clinic.open_minute : 480;
-    const closeMin = Number.isFinite(clinic?.close_minute) ? clinic.close_minute : 1020;
-    const step = Number.isFinite(clinic?.slot_minutes) ? clinic.slot_minutes : 30;
-
-    // 2) Load existing appointments for the day (exclude cancelled)
-    const dayStartISO = buildLocalISO(date, 0);
-    const dayEndISO = buildLocalISO(date, 1439);
-
-    const { data: appts, error: apptErr } = await supabaseAdmin
-      .from("appointments")
-      .select("starts_at, ends_at, status")
-      .eq("clinic_id", clinic_id)
-      .gte("starts_at", dayStartISO)
-      .lte("starts_at", dayEndISO)
-      .not("status", "eq", "cancelled");
-
-    if (apptErr) return res.status(500).json({ error: apptErr.message });
-
-    const busy = (appts || [])
-      .map((a) => ({
-        start: new Date(a.starts_at).getTime(),
-        end: new Date(a.ends_at).getTime(),
-      }))
-      .filter((x) => Number.isFinite(x.start) && Number.isFinite(x.end));
-
-    // 3) Generate slots
-    const slots = [];
-    for (let t = openMin; t + step <= closeMin; t += step) {
-      const starts_at = buildLocalISO(date, t);
-      const ends_at = buildLocalISO(date, t + step);
-
-      const s = new Date(starts_at).getTime();
-      const e = new Date(ends_at).getTime();
-      if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
-
-      const isBusy = busy.some((b) => overlaps(s, e, b.start, b.end));
-      if (!isBusy) slots.push({ starts_at, ends_at });
+    const openMin = timeToMinutes(clinic.open_time);
+    const closeMin = timeToMinutes(clinic.close_time);
+    if (openMin == null || closeMin == null || closeMin <= openMin) {
+      return res.status(400).json({ error: "Clinic hours not configured" });
     }
 
-    return res.status(200).json({ slots });
-  } catch (err) {
-    console.error("public/slots error:", err);
-    return res.status(500).json({ error: "Unexpected error" });
+    // Slot config (30 min)
+    const step = 30;
+
+    // Existing appointments for date
+    const dayStart = new Date(`${date}T00:00:00.000`).toISOString();
+    const dayEnd = new Date(`${date}T23:59:59.999`).toISOString();
+
+    const { data: appts, error: aErr } = await admin
+      .from("appointments")
+      .select("starts_at, ends_at, status")
+      .eq("clinic_id", clinicId)
+      .gte("starts_at", dayStart)
+      .lte("starts_at", dayEnd);
+
+    if (aErr) return res.status(400).json({ error: aErr.message });
+
+    const taken = new Set(
+      (appts || [])
+        .filter((a) => (a.status || "").toLowerCase() !== "cancelled")
+        .map((a) => new Date(a.starts_at))
+        .filter((d) => !Number.isNaN(d.getTime()))
+        .map((d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`)
+    );
+
+    const slots = [];
+    for (let m = openMin; m + step <= closeMin; m += step) {
+      const t = minutesToTime(m);
+      if (!taken.has(t)) slots.push(t);
+    }
+
+    return res.status(200).json({ ok: true, clinic_id: clinicId, date, slots });
+  } catch (e) {
+    console.error("public/slots error:", e);
+    return res.status(400).json({ error: e.message || "Error" });
   }
 }
