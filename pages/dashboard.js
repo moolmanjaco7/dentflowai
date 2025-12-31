@@ -4,20 +4,20 @@ import Link from "next/link";
 import { createClient } from "@supabase/supabase-js";
 import DashboardCalendar from "../components/DashboardCalendar";
 
-async function fetchWithAuth(url, token) {
+async function authedGet(url, token) {
   const res = await fetch(url, {
     cache: "no-store",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: { Authorization: `Bearer ${token}` },
   });
   const json = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, json };
+  return { ok: res.ok, json };
 }
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
   const [appointments, setAppointments] = useState([]);
+
   const [monthKey, setMonthKey] = useState(() => {
     const d = new Date();
     const y = d.getFullYear();
@@ -35,25 +35,26 @@ export default function DashboardPage() {
     return createClient(url, anon);
   }, []);
 
-  async function loadAppointments() {
+  async function load() {
     setLoading(true);
     setError("");
 
     if (!supabase) {
-      setError("Supabase env vars missing on client.");
+      setError("Supabase client not configured.");
       setLoading(false);
       return;
     }
 
     const { data } = await supabase.auth.getSession();
     const token = data?.session?.access_token;
+
     if (!token) {
       setError("Missing token (not logged in).");
       setLoading(false);
       return;
     }
 
-    const { ok, json } = await fetchWithAuth("/api/appointments/list", token);
+    const { ok, json } = await authedGet("/api/appointments/list", token);
     if (!ok) {
       setError(json?.error || "Could not load appointments.");
       setAppointments([]);
@@ -66,7 +67,7 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    loadAppointments();
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -76,7 +77,7 @@ export default function DashboardPage() {
         <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Dashboard</h1>
-            <p className="text-xs text-slate-400">Month calendar + clickable appointments.</p>
+            <p className="text-xs text-slate-400">Month calendar (clinic-scoped).</p>
           </div>
 
           <div className="flex gap-2">
@@ -93,7 +94,7 @@ export default function DashboardPage() {
               Patients
             </Link>
             <button
-              onClick={loadAppointments}
+              onClick={load}
               className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
             >
               Refresh
@@ -116,29 +117,6 @@ export default function DashboardPage() {
           onSelectAppointment={(a) => setSelectedAppt(a)}
         />
 
-        {/* Optional quick list */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-          <div className="flex items-center justify-between">
-            <p className="text-[12px] font-semibold text-slate-100">Latest appointments</p>
-            <p className="text-[12px] text-slate-500">{loading ? "Loading…" : `${appointments.length}`}</p>
-          </div>
-          <div className="mt-3 space-y-2">
-            {(appointments || []).slice(0, 10).map((a) => (
-              <button
-                key={a.id}
-                onClick={() => setSelectedAppt(a)}
-                className="w-full text-left rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 hover:border-slate-600"
-              >
-                <p className="text-[13px] font-semibold text-slate-100">
-                  {(a.patient?.full_name || "Patient")} • {new Date(a.starts_at).toLocaleString("en-ZA")}
-                </p>
-                <p className="text-[11px] text-slate-500">status: {a.status || "—"}</p>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Simple modal */}
         {selectedAppt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
             <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-950 p-4">

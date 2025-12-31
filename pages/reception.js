@@ -13,22 +13,22 @@ function toKey(d) {
   return `${y}-${m}-${day}`;
 }
 
-async function fetchWithAuth(url, token) {
+async function authedGet(url, token) {
   const res = await fetch(url, {
     cache: "no-store",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: { Authorization: `Bearer ${token}` },
   });
   const json = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, json };
+  return { ok: res.ok, json };
 }
 
 export default function ReceptionPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
   const [appointments, setAppointments] = useState([]);
-  const [selectedDateKey, setSelectedDateKey] = useState(toKey(new Date()));
+
   const [monthKey, setMonthKey] = useState(toKey(new Date()));
+  const [selectedDateKey, setSelectedDateKey] = useState(toKey(new Date()));
   const [search, setSearch] = useState("");
   const [selectedAppt, setSelectedAppt] = useState(null);
 
@@ -39,25 +39,26 @@ export default function ReceptionPage() {
     return createClient(url, anon);
   }, []);
 
-  async function loadAppointments() {
+  async function load() {
     setLoading(true);
     setError("");
 
     if (!supabase) {
-      setError("Supabase env vars missing on client.");
+      setError("Supabase client not configured.");
       setLoading(false);
       return;
     }
 
     const { data } = await supabase.auth.getSession();
     const token = data?.session?.access_token;
+
     if (!token) {
       setError("Missing token (not logged in).");
       setLoading(false);
       return;
     }
 
-    const { ok, json } = await fetchWithAuth("/api/appointments/list", token);
+    const { ok, json } = await authedGet("/api/appointments/list", token);
     if (!ok) {
       setError(json?.error || "Could not load appointments.");
       setAppointments([]);
@@ -70,14 +71,13 @@ export default function ReceptionPage() {
   }
 
   useEffect(() => {
-    loadAppointments();
+    load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const dayList = useMemo(() => {
-    const q = String(search || "").toLowerCase().trim();
+    const q = search.trim().toLowerCase();
     const list = (appointments || []).filter((a) => toKey(a.starts_at) === selectedDateKey);
-
     if (!q) return list;
 
     return list.filter((a) => {
@@ -94,7 +94,7 @@ export default function ReceptionPage() {
         <header className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold">Reception</h1>
-            <p className="text-xs text-slate-400">Calendar + day list (tenant-safe).</p>
+            <p className="text-xs text-slate-400">Month calendar + day list (clinic-scoped).</p>
           </div>
 
           <div className="flex gap-2">
@@ -111,7 +111,7 @@ export default function ReceptionPage() {
               Dashboard
             </Link>
             <button
-              onClick={loadAppointments}
+              onClick={load}
               className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
             >
               Refresh
@@ -125,7 +125,7 @@ export default function ReceptionPage() {
           </div>
         )}
 
-        {/* Top controls */}
+        {/* Controls at TOP (as requested) */}
         <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
           <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr),220px,auto] items-center">
             <input
@@ -141,7 +141,10 @@ export default function ReceptionPage() {
               className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-100 outline-none"
             />
             <button
-              onClick={() => { setSearch(""); setSelectedDateKey(toKey(new Date())); }}
+              onClick={() => {
+                setSearch("");
+                setSelectedDateKey(toKey(new Date()));
+              }}
               className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-[12px] text-slate-200 hover:border-slate-600"
             >
               Today
@@ -149,7 +152,7 @@ export default function ReceptionPage() {
           </div>
         </div>
 
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr),minmax(0,0.6fr)]">
+        <section className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr),minmax(0,0.55fr)]">
           <div className="space-y-4">
             <DashboardCalendar
               appointments={appointments}
@@ -175,7 +178,8 @@ export default function ReceptionPage() {
                       {a.patient?.full_name || "Patient"}
                     </p>
                     <p className="text-[11px] text-slate-500">
-                      {new Date(a.starts_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })} • {a.status || "—"}
+                      {new Date(a.starts_at).toLocaleTimeString("en-ZA", { hour: "2-digit", minute: "2-digit" })} •{" "}
+                      {a.status || "—"}
                     </p>
                   </button>
                 ))}
@@ -187,9 +191,10 @@ export default function ReceptionPage() {
           </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-            <p className="text-[12px] font-semibold text-slate-100">Tip</p>
+            <p className="text-[12px] font-semibold text-slate-100">Next</p>
             <p className="mt-2 text-[12px] text-slate-400">
-              If the calendar is empty, create a booking via <b>Reception Booking</b> or public <b>/book</b>.
+              Create a booking via <b>Reception Booking</b> or public <b>/book</b>. Then confirm it appears here + on
+              Dashboard.
             </p>
           </div>
         </section>
